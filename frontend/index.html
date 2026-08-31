@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Copperbelt Province Interlaboratory Program</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#12211F; --paper:#F2F6F4; --paper-2:#E6EDEA; --line:#C9D6D1; --muted:#6C7F79;
+    --teal:#123B39; --teal-2:#1D544F; --gold:#AD8A4D;
+    --alert:#B8433B; --alertbg:#F7DEDC; --ok:#2F7A5E; --okbg:#DFF0E7; --warn:#C08A2E; --warnbg:#FBEAD2;
+    --radius:14px; --maxw:1020px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; font-family:'Inter',sans-serif; background:var(--paper); color:var(--ink); -webkit-font-smoothing:antialiased;}
+
+  header.top{background:var(--teal); color:#fff; padding:16px 24px;}
+  .top-inner{max-width:var(--maxw); margin:0 auto; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;}
+  .brandmark{font-family:'Space Grotesk',sans-serif; font-size:16px; font-weight:600;}
+  .brandmark .tag{font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.14em; color:var(--gold); display:block; text-transform:uppercase; margin-bottom:2px; font-weight:400;}
+  .who{display:flex; align-items:center; gap:10px; font-size:12.5px; color:#BFD2CC;}
+  .who b{color:#fff;}
+  .logout-btn{background:none; border:1px solid #3f6660; color:#fff; padding:6px 12px; border-radius:7px; font-size:12px; cursor:pointer;}
+
+  nav.navbar{position:sticky; top:0; z-index:20; background:#fff; border-bottom:1px solid var(--line);}
+  .navbar-inner{max-width:var(--maxw); margin:0 auto; display:flex; gap:2px; padding:0 24px; overflow-x:auto;}
+  .navbar button{background:none; border:none; padding:14px 14px; font-size:13.5px; font-weight:500; color:var(--muted); cursor:pointer; border-bottom:2.5px solid transparent; white-space:nowrap;}
+  .navbar button.active{color:var(--teal); border-bottom-color:var(--gold); font-weight:600;}
+
+  main{max-width:var(--maxw); margin:0 auto; padding:28px 24px 80px;}
+  .tab-panel{display:none;} .tab-panel.active{display:block;}
+  h2.section{font-family:'Space Grotesk',sans-serif; font-size:18px; font-weight:600; margin:0 0 14px; color:var(--teal);}
+  h3.subsection{font-family:'Space Grotesk',sans-serif; font-size:14.5px; font-weight:600; margin:22px 0 10px; color:var(--teal);}
+  .grid2{display:grid; grid-template-columns:1fr; gap:16px;}
+  @media(min-width:760px){ .grid2.split{grid-template-columns:1fr 1.15fr;} }
+
+  .card{background:#fff; border:1px solid var(--line); border-radius:var(--radius); padding:18px; margin-bottom:14px;}
+  label{display:block; font-size:12px; color:var(--muted); margin:13px 0 6px; font-weight:500;}
+  label:first-child{margin-top:0;}
+  input, select, textarea{width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:9px; font-size:14px; font-family:'Inter',sans-serif; background:var(--paper); color:var(--ink);}
+  textarea{resize:vertical; min-height:64px;}
+  input:focus, select:focus, textarea:focus, button:focus-visible{outline:2px solid var(--gold); outline-offset:1px;}
+  input.mono{font-family:'IBM Plex Mono',monospace;}
+  .row2{display:flex; gap:10px;} .row2>div{flex:1;}
+  .row3{display:flex; gap:10px; flex-wrap:wrap;} .row3>div{flex:1; min-width:130px;}
+
+  button.primary{padding:11px 18px; background:var(--teal); color:#fff; border:none; border-radius:9px; font-size:13.5px; font-weight:600; cursor:pointer; margin-top:8px;}
+  button.primary:active{background:var(--teal-2);}
+  button.primary.gold{background:var(--gold); color:var(--teal);}
+  button.secondary{padding:10px 16px; background:none; border:1px solid var(--line); color:var(--ink); border-radius:9px; font-size:13px; cursor:pointer; margin-top:8px;}
+  button.small{padding:6px 11px; font-size:12px; border-radius:7px;}
+  button:disabled{opacity:0.5; cursor:not-allowed;}
+  .btn-row{display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;}
+
+  .toast{position:fixed; bottom:26px; left:50%; transform:translateX(-50%); background:var(--teal); color:#fff; padding:11px 20px; border-radius:30px; font-size:13px; opacity:0; pointer-events:none; transition:opacity .25s; max-width:90vw; text-align:center; z-index:50;}
+  .toast.show{opacity:1;}
+  .empty{text-align:center; color:var(--muted); font-size:13px; padding:30px 10px;}
+
+  .badge{font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.03em; padding:4px 10px; border-radius:20px; text-transform:uppercase; white-space:nowrap;}
+  .badge.open{background:var(--okbg); color:var(--ok);}
+  .badge.closing{background:var(--warnbg); color:var(--warn);}
+  .badge.closed{background:var(--alertbg); color:var(--alert);}
+  .badge.role{background:var(--paper-2); color:var(--teal); text-transform:none;}
+
+  .flag{font-size:10.5px; font-family:'IBM Plex Mono',monospace; padding:3px 9px; border-radius:20px; text-transform:uppercase;}
+  .flag.ok{background:var(--okbg); color:var(--ok);}
+  .flag.alert{background:var(--alertbg); color:var(--alert);}
+  .flag.neutral{background:var(--paper-2); color:var(--muted);}
+
+  .row-item{display:flex; justify-content:space-between; align-items:center; padding:11px 0; border-bottom:1px solid var(--line); font-size:13.5px; gap:10px; flex-wrap:wrap;}
+  .row-item:last-child{border-bottom:none;}
+  .row-item .meta{font-size:11.5px; color:var(--muted); font-family:'IBM Plex Mono',monospace;}
+  .round-card{cursor:pointer; transition:box-shadow .15s;}
+  .round-card.selected{box-shadow:0 0 0 1.5px var(--gold);}
+  .countdown{font-family:'IBM Plex Mono',monospace; font-size:11.5px; margin-top:3px;}
+  .countdown.open{color:var(--ok);} .countdown.closing{color:var(--warn);} .countdown.closed{color:var(--alert);}
+
+  .note{font-size:12px; color:var(--muted); background:var(--paper-2); border:1px dashed var(--line); border-radius:8px; padding:10px 12px; margin-bottom:16px;}
+  .login-wrap{max-width:440px; margin:60px auto; padding:0 20px;}
+  .toggle-row{display:flex; gap:8px; margin-top:8px;}
+  .fieldset-title{font-size:12.5px; font-weight:600; color:var(--teal); margin:16px 0 6px;}
+
+  #printArea{display:none;}
+  @media print{
+    body *{visibility:hidden;}
+    #printArea, #printArea *{visibility:visible;}
+    #printArea{display:block; position:absolute; top:0; left:0; width:100%; padding:30px;}
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="brandmark"><span class="tag">[ ILC ]</span>Copperbelt Province Interlaboratory Program</div>
+    <div class="who" id="whoBox" style="display:none;">
+      <span>Signed in as <b id="whoName"></b></span>
+      <span class="badge role" id="whoRole"></span>
+      <button class="logout-btn" id="logoutBtn">Log out</button>
+    </div>
+  </div>
+</header>
+
+<!-- ================= LOGIN ================= -->
+<div class="login-wrap" id="loginScreen">
+  <div class="card" id="bootstrapCard" style="display:none;">
+    <h2 class="section">Set up the Super Admin</h2>
+    <div class="note">No accounts exist yet. Create the site-wide Super Admin account first — this person will add facilities and manage access for everyone else.</div>
+    <label>Full name</label>
+    <input type="text" id="bootstrapName" placeholder="e.g. Chola Chela">
+    <label>Username</label>
+    <input type="text" id="bootstrapUsername" placeholder="e.g. chola.chela" autocomplete="username">
+    <label>Password</label>
+    <input type="password" id="bootstrapPassword" placeholder="Choose a password" autocomplete="new-password">
+    <button class="primary" id="bootstrapBtn">Create Super Admin & continue</button>
+  </div>
+
+  <div class="card" id="loginCard">
+    <h2 class="section">Sign in</h2>
+    <div class="note">Enter the username and password given to you by your Super Admin or facility's Admin.</div>
+    <label>Username</label>
+    <input type="text" id="loginUsername" placeholder="Username" autocomplete="username">
+    <label>Password</label>
+    <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password">
+    <button class="primary" id="loginBtn">Continue</button>
+  </div>
+</div>
+
+<!-- ================= APP ================= -->
+<div id="appShell" style="display:none;">
+  <nav class="navbar"><div class="navbar-inner" id="navInner"></div></nav>
+  <main>
+
+    <!-- SUPER ADMIN -->
+    <section class="tab-panel" id="tab-facilities">
+      <h2 class="section">Facilities</h2>
+      <div class="grid2 split">
+        <div class="card">
+          <label>Facility name</label>
+          <input type="text" id="newFacilityName" placeholder="e.g. Ndola Central Hospital Lab">
+          <label>Town / location</label>
+          <input type="text" id="newFacilityTown" placeholder="e.g. Ndola">
+          <button class="primary" id="addFacilityBtn">Add facility</button>
+        </div>
+        <div class="card">
+          <h3 class="subsection" style="margin-top:0;">All facilities</h3>
+          <div id="facilitiesList"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-access">
+      <h2 class="section">Users & access</h2>
+      <div class="grid2 split">
+        <div class="card">
+          <label>Full name</label>
+          <input type="text" id="newUserName" placeholder="Full name">
+          <label>Username</label>
+          <input type="text" id="newUserUsername" placeholder="e.g. jane.mwansa" autocomplete="off">
+          <label>Temporary password</label>
+          <input type="text" id="newUserPassword" placeholder="Give this to the user" autocomplete="off">
+          <label>Role</label>
+          <select id="newUserRole">
+            <option value="facilityadmin">Facility Admin</option>
+            <option value="user">Facility User</option>
+            <option value="superadmin">Super Admin</option>
+          </select>
+          <label>Facility</label>
+          <select id="newUserFacility"></select>
+          <button class="primary" id="addUserBtn">Add user</button>
+        </div>
+        <div class="card">
+          <h3 class="subsection" style="margin-top:0;">All users</h3>
+          <div id="usersList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FACILITY ADMIN -->
+    <section class="tab-panel" id="tab-facusers">
+      <h2 class="section">My facility's users</h2>
+      <div class="grid2 split">
+        <div class="card">
+          <label>Full name</label>
+          <input type="text" id="newFacUserName" placeholder="Full name">
+          <label>Username</label>
+          <input type="text" id="newFacUserUsername" placeholder="e.g. jane.mwansa" autocomplete="off">
+          <label>Temporary password</label>
+          <input type="text" id="newFacUserPassword" placeholder="Give this to the user" autocomplete="off">
+          <button class="primary" id="addFacUserBtn">Add user to my facility</button>
+        </div>
+        <div class="card">
+          <h3 class="subsection" style="margin-top:0;">Users at my facility</h3>
+          <div id="facUsersList"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-provide">
+      <h2 class="section">Tests we're providing this rotation</h2>
+      <div class="grid2 split">
+        <div class="card">
+          <label>Test</label>
+          <select id="newRoundTest"></select>
+          <label>Sample ID</label>
+          <input type="text" class="mono" id="newRoundSample" placeholder="PT-XXXX-0000">
+          <label>Submission deadline</label>
+          <input type="date" id="newRoundDeadline">
+          <button class="primary" id="addRoundBtn">Create round</button>
+        </div>
+        <div class="card">
+          <h3 class="subsection" style="margin-top:0;">Rounds our facility provides</h3>
+          <div id="providedRoundsList"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-feedback-admin">
+      <h2 class="section">Give feedback</h2>
+      <div class="card">
+        <label>Round</label>
+        <select id="feedbackRoundSelect"></select>
+      </div>
+      <div id="feedbackSubmissionsList"></div>
+    </section>
+
+    <!-- FACILITY USER -->
+    <section class="tab-panel" id="tab-rounds">
+      <h2 class="section">Active rounds</h2>
+      <div id="roundsList"></div>
+    </section>
+
+    <section class="tab-panel" id="tab-submit">
+      <h2 class="section">Submit result</h2>
+      <div id="noRoundNotice" class="empty" style="display:none;">Pick a round in Active Rounds first.</div>
+      <div id="submitFormWrap" style="display:none;">
+        <div class="card" id="roundInfoCard"></div>
+        <div class="card">
+          <h3 class="fieldset-title" style="margin-top:0;">Sample receipt</h3>
+          <div class="row2">
+            <div><label>Date sample received</label><input type="date" id="dateReceived"></div>
+            <div><label>Kit / method used</label><input type="text" id="methodUsed" placeholder="optional"></div>
+          </div>
+          <label>Condition of sample on receipt</label>
+          <textarea id="sampleCondition" placeholder="e.g. Received intact, no haemolysis, correct temperature"></textarea>
+
+          <h3 class="fieldset-title">Result</h3>
+          <div id="dynamicResultFields"></div>
+
+          <h3 class="fieldset-title">Personnel</h3>
+          <div class="row2">
+            <div><label>Tested by</label><input type="text" id="personnelTesting" placeholder="Name of analyst"></div>
+            <div><label>Verified by</label><input type="text" id="personnelVerifying" placeholder="Name of verifier"></div>
+          </div>
+
+          <div class="btn-row">
+            <button class="secondary" id="saveExitBtn">Save & exit</button>
+            <button class="primary" id="submitFinalBtn">Submit final result</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-myfeedback">
+      <h2 class="section">My feedback</h2>
+      <div id="myFeedbackList"></div>
+    </section>
+
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+<div id="printArea"></div>
+
+<script>
+/* ---------------- Test catalog ---------------- */
+const TESTS = [
+  { id:'bloodgroup', name:'Blood Grouping and Cross Match', kind:'bloodgroup' },
+  { id:'hiv', name:'HIV Serology', kind:'serology' },
+  { id:'hbsag', name:'HBsAg Serology', kind:'serology' },
+  { id:'rpr', name:'RPR Serology', kind:'serology' },
+  { id:'pregnancy', name:'Pregnancy Test', kind:'serology' },
+  { id:'fbc', name:'Full Blood Count', kind:'fbc' },
+  { id:'chem', name:'Chemistry', kind:'chem' },
+];
+const SEROLOGY_OPTIONS = ['Indeterminate','Reactive','Non-Reactive'];
+const FBC_ANALYTES = [
+  {key:'wbc', label:'WBC', unit:'x10^9/L'},
+  {key:'rbc', label:'RBC', unit:'x10^12/L'},
+  {key:'hgb', label:'Hemoglobin', unit:'g/dL'},
+  {key:'hct', label:'Hematocrit', unit:'%'},
+  {key:'plt', label:'Platelets', unit:'x10^9/L'},
+];
+const CHEM_ANALYTES = [
+  {key:'glucose', label:'Glucose', unit:'mmol/L'},
+  {key:'urea', label:'Urea', unit:'mmol/L'},
+  {key:'creatinine', label:'Creatinine', unit:'µmol/L'},
+  {key:'sodium', label:'Sodium', unit:'mmol/L'},
+  {key:'potassium', label:'Potassium', unit:'mmol/L'},
+];
+function testById(id){ return TESTS.find(t=>t.id===id); }
+
+/* ---------------- API config & helpers ---------------- */
+// Point this at your deployed backend, e.g. 'https://copperbelt-ilc-api.onrender.com/api'
+const API_BASE = window.API_BASE || 'http://localhost:4000/api';
+
+let authToken = localStorage.getItem('ilc_token') || null;
+
+async function api(path, { method = 'GET', body } = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (authToken) headers.Authorization = 'Bearer ' + authToken;
+  const res = await fetch(API_BASE + path, {
+    method, headers, body: body ? JSON.stringify(body) : undefined,
+  });
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* no body */ }
+  if (!res.ok) {
+    const message = (data && data.error) || `Request failed (${res.status})`;
+    throw new Error(message);
+  }
+  return data;
+}
+
+let FACILITIES = [], USERS = [], ROUNDS = [];
+let session = null;
+let selectedRoundId = null;
+
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2200);
+}
+function uid(prefix){ return prefix + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function facilityName(id){ const f = FACILITIES.find(x=>x.id===id); return f ? f.name : '—'; }
+
+/* ---------------- Countdown ---------------- */
+function countdownInfo(deadline){
+  const now = new Date();
+  const end = new Date(deadline + 'T23:59:59');
+  const ms = end - now;
+  if(ms <= 0) return {status:'closed', text:'Closed', cls:'closed'};
+  const totalHours = ms / 36e5;
+  const days = Math.floor(totalHours/24);
+  const hours = Math.floor(totalHours%24);
+  const mins = Math.floor((ms/60000)%60);
+  const text = days > 0 ? `${days}d ${hours}h left` : `${hours}h ${mins}m left`;
+  const status = totalHours <= 48 ? 'closing' : 'open';
+  const label = status === 'closing' ? 'Closing soon' : 'Open';
+  return {status, text, cls:status, label};
+}
+
+/* ---------------- Session / login ---------------- */
+async function initLogin(){
+  const { needsBootstrap } = await api('/auth/bootstrap-status');
+  document.getElementById('bootstrapCard').style.display = needsBootstrap ? 'block' : 'none';
+  document.getElementById('loginCard').style.display = needsBootstrap ? 'none' : 'block';
+}
+
+function roleLabel(role){
+  return role==='superadmin' ? 'Super Admin' : role==='facilityadmin' ? 'Facility Admin' : 'Facility User';
+}
+
+document.getElementById('bootstrapBtn').addEventListener('click', async ()=>{
+  const name = document.getElementById('bootstrapName').value.trim();
+  const username = document.getElementById('bootstrapUsername').value.trim();
+  const password = document.getElementById('bootstrapPassword').value;
+  if(!name || !username || !password){ showToast('Fill in name, username and password.'); return; }
+  try{
+    const { token, user } = await api('/auth/bootstrap', { method:'POST', body:{ name, username, password } });
+    authToken = token;
+    localStorage.setItem('ilc_token', token);
+    await setSession(user);
+  }catch(e){ showToast(e.message); }
+});
+
+document.getElementById('loginBtn').addEventListener('click', async ()=>{
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  if(!username || !password){ showToast('Enter your username and password.'); return; }
+  try{
+    const { token, user } = await api('/auth/login', { method:'POST', body:{ username, password } });
+    authToken = token;
+    localStorage.setItem('ilc_token', token);
+    await setSession(user);
+  }catch(e){ showToast(e.message); }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', async ()=>{
+  session = null;
+  authToken = null;
+  localStorage.removeItem('ilc_token');
+  document.getElementById('appShell').style.display = 'none';
+  document.getElementById('whoBox').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'block';
+  initLogin();
+});
+
+async function setSession(u){
+  session = { userId:u.id, name:u.name, role:u.role, facilityId:u.facilityId };
+  enterApp();
+}
+
+async function tryRestoreSession(){
+  if(!authToken) return false;
+  try{
+    const { user } = await api('/auth/me');
+    session = { userId:user.id, name:user.name, role:user.role, facilityId:user.facilityId };
+    return true;
+  }catch(e){
+    authToken = null;
+    localStorage.removeItem('ilc_token');
+    return false;
+  }
+}
+
+/* ---------------- Nav / role-based tabs ---------------- */
+const NAV_BY_ROLE = {
+  superadmin: [ ['facilities','Facilities'], ['access','Users & Access'] ],
+  facilityadmin: [ ['facusers','My Facility Users'], ['provide','Tests We Provide'], ['feedback-admin','Give Feedback'] ],
+  user: [ ['rounds','Active Rounds'], ['submit','Submit Result'], ['myfeedback','My Feedback'] ],
+};
+
+function enterApp(){
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('appShell').style.display = 'block';
+  document.getElementById('whoBox').style.display = 'flex';
+  document.getElementById('whoName').textContent = session.name;
+  document.getElementById('whoRole').textContent = roleLabel(session.role);
+
+  const navInner = document.getElementById('navInner');
+  const tabs = NAV_BY_ROLE[session.role];
+  navInner.innerHTML = tabs.map((t,i)=>`<button class="nav-btn${i===0?' active':''}" data-tab="${t[0]}">${t[1]}</button>`).join('');
+  navInner.querySelectorAll('.nav-btn').forEach(btn=>btn.addEventListener('click', ()=>setActiveTab(btn.dataset.tab)));
+
+  document.querySelectorAll('#appShell .tab-panel').forEach(p=>p.classList.remove('active'));
+  setActiveTab(tabs[0][0]);
+
+  loadAllData();
+  setInterval(refreshCountdownsIfVisible, 30000);
+}
+
+async function loadAllData(){
+  FACILITIES = await api('/facilities');
+  ROUNDS = await api('/rounds');
+  if(session.role === 'superadmin' || session.role === 'facilityadmin'){
+    USERS = await api('/users');
+  }
+  renderCurrentTab();
+}
+
+function setActiveTab(tab){
+  document.querySelectorAll('#appShell .tab-panel').forEach(p=>p.classList.remove('active'));
+  const panel = document.getElementById('tab-' + tab);
+  if(panel) panel.classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab === tab));
+  window.currentTab = tab;
+  renderCurrentTab();
+}
+
+function renderCurrentTab(){
+  const tab = window.currentTab;
+  if(!tab) return;
+  if(tab==='facilities') renderFacilities();
+  if(tab==='access') renderAccess();
+  if(tab==='facusers') renderFacUsers();
+  if(tab==='provide') renderProvide();
+  if(tab==='feedback-admin') renderFeedbackAdmin();
+  if(tab==='rounds') renderRounds();
+  if(tab==='submit') renderSubmit();
+  if(tab==='myfeedback') renderMyFeedback();
+}
+function refreshCountdownsIfVisible(){
+  if(window.currentTab === 'rounds') renderRounds();
+}
+
+/* ---------------- SUPER ADMIN: Facilities ---------------- */
+function renderFacilities(){
+  const el = document.getElementById('facilitiesList');
+  if(FACILITIES.length===0){ el.innerHTML = '<div class="empty">No facilities yet.</div>'; return; }
+  el.innerHTML = FACILITIES.map(f=>{
+    const userCount = USERS.filter(u=>u.facilityId===f.id).length;
+    return `<div class="row-item"><div><strong>${f.name}</strong><div class="meta">${f.town||''}</div></div><div class="meta">${userCount} user${userCount===1?'':'s'}</div></div>`;
+  }).join('');
+}
+document.getElementById('addFacilityBtn').addEventListener('click', async ()=>{
+  const name = document.getElementById('newFacilityName').value.trim();
+  const town = document.getElementById('newFacilityTown').value.trim();
+  if(!name){ showToast('Enter a facility name.'); return; }
+  try{
+    const f = await api('/facilities', { method:'POST', body:{ name, town } });
+    FACILITIES.push(f);
+    document.getElementById('newFacilityName').value = '';
+    document.getElementById('newFacilityTown').value = '';
+    showToast('Facility added.');
+    renderFacilities();
+    populateFacilitySelects();
+  }catch(e){ showToast(e.message); }
+});
+
+/* ---------------- SUPER ADMIN: Users & Access ---------------- */
+function populateFacilitySelects(){
+  const opts = FACILITIES.map(f=>`<option value="${f.id}">${f.name}</option>`).join('');
+  const sel = document.getElementById('newUserFacility');
+  if(sel) sel.innerHTML = opts || '<option value="">Add a facility first</option>';
+}
+function renderAccess(){
+  populateFacilitySelects();
+  const el = document.getElementById('usersList');
+  if(USERS.length===0){ el.innerHTML = '<div class="empty">No users yet.</div>'; return; }
+  el.innerHTML = USERS.map(u=>`
+    <div class="row-item">
+      <div><strong>${u.name}</strong><div class="meta">${roleLabel(u.role)}${u.facilityId ? ' · ' + facilityName(u.facilityId) : ''}</div></div>
+      <button class="secondary small toggle-active" data-id="${u.id}">${u.active===false ? 'Enable' : 'Disable'}</button>
+    </div>`).join('');
+  el.querySelectorAll('.toggle-active').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const u = USERS.find(x=>x.id===Number(btn.dataset.id));
+      const nextActive = u.active===false ? true : false;
+      try{
+        const updated = await api(`/users/${u.id}/active`, { method:'PATCH', body:{ active: nextActive } });
+        u.active = updated.active;
+        renderAccess();
+        showToast(u.active ? 'User enabled.' : 'User disabled.');
+      }catch(e){ showToast(e.message); }
+    });
+  });
+}
+document.getElementById('addUserBtn').addEventListener('click', async ()=>{
+  const name = document.getElementById('newUserName').value.trim();
+  const username = document.getElementById('newUserUsername').value.trim();
+  const password = document.getElementById('newUserPassword').value;
+  const role = document.getElementById('newUserRole').value;
+  const facilityId = document.getElementById('newUserFacility').value || null;
+  if(!name || !username || !password){ showToast('Fill in name, username and password.'); return; }
+  if(role !== 'superadmin' && !facilityId){ showToast('Select a facility, or add one first.'); return; }
+  try{
+    const u = await api('/users', { method:'POST', body:{ name, username, password, role, facilityId } });
+    USERS.push(u);
+    document.getElementById('newUserName').value = '';
+    document.getElementById('newUserUsername').value = '';
+    document.getElementById('newUserPassword').value = '';
+    showToast('User added.');
+    renderAccess();
+  }catch(e){ showToast(e.message); }
+});
+
+/* ---------------- FACILITY ADMIN: My Users ---------------- */
+function renderFacUsers(){
+  const el = document.getElementById('facUsersList');
+  const mine = USERS.filter(u=>u.facilityId===session.facilityId && u.role==='user');
+  if(mine.length===0){ el.innerHTML = '<div class="empty">No users added yet.</div>'; return; }
+  el.innerHTML = mine.map(u=>`
+    <div class="row-item">
+      <div><strong>${u.name}</strong></div>
+      <button class="secondary small toggle-active" data-id="${u.id}">${u.active===false ? 'Enable' : 'Disable'}</button>
+    </div>`).join('');
+  el.querySelectorAll('.toggle-active').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const u = USERS.find(x=>x.id===Number(btn.dataset.id));
+      const nextActive = u.active===false ? true : false;
+      try{
+        const updated = await api(`/users/${u.id}/active`, { method:'PATCH', body:{ active: nextActive } });
+        u.active = updated.active;
+        renderFacUsers();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+}
+document.getElementById('addFacUserBtn').addEventListener('click', async ()=>{
+  const name = document.getElementById('newFacUserName').value.trim();
+  const username = document.getElementById('newFacUserUsername').value.trim();
+  const password = document.getElementById('newFacUserPassword').value;
+  if(!name || !username || !password){ showToast('Fill in name, username and password.'); return; }
+  try{
+    const u = await api('/users', { method:'POST', body:{ name, username, password } });
+    USERS.push(u);
+    document.getElementById('newFacUserName').value = '';
+    document.getElementById('newFacUserUsername').value = '';
+    document.getElementById('newFacUserPassword').value = '';
+    showToast('User added to your facility.');
+    renderFacUsers();
+  }catch(e){ showToast(e.message); }
+});
+
+/* ---------------- FACILITY ADMIN: Tests We Provide ---------------- */
+function renderProvide(){
+  const testSel = document.getElementById('newRoundTest');
+  testSel.innerHTML = TESTS.map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
+  const el = document.getElementById('providedRoundsList');
+  const mine = ROUNDS.filter(r=>r.providingFacilityId===session.facilityId);
+  if(mine.length===0){ el.innerHTML = '<div class="empty">Your facility isn&rsquo;t providing any rounds yet.</div>'; return; }
+  el.innerHTML = mine.map(r=>{
+    const c = countdownInfo(r.deadline);
+    return `<div class="row-item"><div><strong>${testById(r.testId).name}</strong><div class="meta">SAMPLE ${r.sampleId}</div></div><span class="badge ${c.cls}">${c.label || 'Closed'}</span></div>`;
+  }).join('');
+}
+document.getElementById('addRoundBtn').addEventListener('click', async ()=>{
+  const testId = document.getElementById('newRoundTest').value;
+  const sampleId = document.getElementById('newRoundSample').value.trim();
+  const deadline = document.getElementById('newRoundDeadline').value;
+  if(!sampleId || !deadline){ showToast('Fill in sample ID and deadline.'); return; }
+  try{
+    const r = await api('/rounds', { method:'POST', body:{ testId, sampleId, deadline } });
+    ROUNDS.push(r);
+    document.getElementById('newRoundSample').value = '';
+    document.getElementById('newRoundDeadline').value = '';
+    showToast('Round created.');
+    renderProvide();
+  }catch(e){ showToast(e.message); }
+});
+
+/* ---------------- FACILITY ADMIN: Give Feedback ---------------- */
+async function renderFeedbackAdmin(){
+  const sel = document.getElementById('feedbackRoundSelect');
+  const mine = ROUNDS.filter(r=>r.providingFacilityId===session.facilityId);
+  if(mine.length===0){
+    sel.innerHTML = '<option value="">No rounds yet</option>';
+    document.getElementById('feedbackSubmissionsList').innerHTML = '<div class="empty">Create a round first.</div>';
+    return;
+  }
+  sel.innerHTML = mine.map(r=>`<option value="${r.id}">${testById(r.testId).name} — ${r.sampleId}</option>`).join('');
+  sel.onchange = ()=>renderFeedbackSubmissions(sel.value);
+  renderFeedbackSubmissions(sel.value);
+}
+async function renderFeedbackSubmissions(roundId){
+  const el = document.getElementById('feedbackSubmissionsList');
+  const round = ROUNDS.find(r=>r.id===Number(roundId));
+  const all = await api(`/rounds/${roundId}/submissions`);
+  const subs = all.filter(s=>s.status==='submitted');
+  if(!round || subs.length===0){ el.innerHTML = '<div class="empty">No submitted results yet for this round.</div>'; return; }
+  el.innerHTML = subs.map(s=>`
+    <div class="card">
+      <div class="row-item" style="border:none; padding-top:0;">
+        <div><strong>${facilityName(s.facilityId)}</strong><div class="meta">Submitted ${new Date(s.submittedAt).toLocaleString()}</div></div>
+      </div>
+      <div class="meta" style="margin-bottom:8px;">${formatResultSummary(round.testId, s.result)}</div>
+      <label>Feedback status</label>
+      <select class="fb-status" data-sub="${s.id}">
+        <option value="not_evaluated" ${s.feedback?.status==='not_evaluated'||!s.feedback?'selected':''}>Not Evaluated</option>
+        <option value="acceptable" ${s.feedback?.status==='acceptable'?'selected':''}>Acceptable</option>
+        <option value="unacceptable" ${s.feedback?.status==='unacceptable'?'selected':''}>Unacceptable</option>
+      </select>
+      <label>Comment</label>
+      <textarea class="fb-comment" data-sub="${s.id}">${s.feedback?.comment||''}</textarea>
+      <button class="primary small save-fb" data-sub="${s.id}" data-round="${roundId}">Save feedback</button>
+    </div>`).join('');
+  el.querySelectorAll('.save-fb').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const subId = btn.dataset.sub, rId = btn.dataset.round;
+      const status = el.querySelector(`.fb-status[data-sub="${subId}"]`).value;
+      const comment = el.querySelector(`.fb-comment[data-sub="${subId}"]`).value;
+      try{
+        await api(`/rounds/${rId}/submissions/${subId}/feedback`, { method:'POST', body:{ status, comment } });
+        showToast('Feedback saved.');
+      }catch(e){ showToast(e.message); }
+    });
+  });
+}
+function formatResultSummary(testId, result){
+  const t = testById(testId);
+  if(t.kind==='bloodgroup') return `ABO: ${result.abo||'—'} · Rh: ${result.rhesus||'—'} · Saline XM: ${result.saline||'—'} · AHG XM: ${result.ahg||'—'}`;
+  if(t.kind==='serology') return `Result: ${result.value||'—'}`;
+  if(t.kind==='fbc') return FBC_ANALYTES.map(a=>`${a.label} ${result[a.key]??'—'} ${a.unit}`).join(' · ');
+  if(t.kind==='chem') return CHEM_ANALYTES.map(a=>`${a.label} ${result[a.key]??'—'} ${a.unit}`).join(' · ');
+  return '';
+}
+
+/* ---------------- USER: Active Rounds ---------------- */
+function renderRounds(){
+  const el = document.getElementById('roundsList');
+  if(ROUNDS.length===0){ el.innerHTML = '<div class="empty">No rounds have been created yet.</div>'; return; }
+  el.innerHTML = '';
+  ROUNDS.forEach(r=>{
+    const c = countdownInfo(r.deadline);
+    const div = document.createElement('div');
+    div.className = 'card round-card' + (String(r.id)===String(selectedRoundId) ? ' selected' : '');
+    div.innerHTML = `
+      <div class="row-item" style="border:none; padding:0;">
+        <div>
+          <strong>${testById(r.testId).name}</strong>
+          <div class="meta">SAMPLE ${r.sampleId} · provided by ${facilityName(r.providingFacilityId)}</div>
+          <div class="countdown ${c.cls}">${c.status==='closed' ? 'Closed' : c.text}</div>
+        </div>
+        <span class="badge ${c.cls}">${c.status==='closed' ? 'Closed' : c.label}</span>
+      </div>`;
+    div.addEventListener('click', ()=>{ selectedRoundId = r.id; renderRounds(); showToast(`Selected: ${testById(r.testId).name}`); });
+    el.appendChild(div);
+  });
+}
+
+/* ---------------- USER: Submit Result ---------------- */
+function dynamicFieldsHtml(testId, existing){
+  const t = testById(testId);
+  existing = existing || {};
+  if(t.kind==='bloodgroup'){
+    return `
+      <label>ABO group</label>
+      <select id="rf_abo"><option value="">Select</option>${['A','B','AB','O'].map(v=>`<option ${existing.abo===v?'selected':''}>${v}</option>`).join('')}</select>
+      <label>Rhesus</label>
+      <select id="rf_rhesus"><option value="">Select</option>${['Positive','Negative'].map(v=>`<option ${existing.rhesus===v?'selected':''}>${v}</option>`).join('')}</select>
+      <label>Cross match — Saline</label>
+      <select id="rf_saline"><option value="">Select</option>${['Compatible','Incompatible'].map(v=>`<option ${existing.saline===v?'selected':''}>${v}</option>`).join('')}</select>
+      <label>Cross match — AHG</label>
+      <select id="rf_ahg"><option value="">Select</option>${['Compatible','Incompatible'].map(v=>`<option ${existing.ahg===v?'selected':''}>${v}</option>`).join('')}</select>
+    `;
+  }
+  if(t.kind==='serology'){
+    return `<label>Result</label><select id="rf_value"><option value="">Select</option>${SEROLOGY_OPTIONS.map(v=>`<option ${existing.value===v?'selected':''}>${v}</option>`).join('')}</select>`;
+  }
+  if(t.kind==='fbc' || t.kind==='chem'){
+    const analytes = t.kind==='fbc' ? FBC_ANALYTES : CHEM_ANALYTES;
+    return analytes.map(a=>`<label>${a.label} (${a.unit})</label><input type="number" step="any" class="mono" id="rf_${a.key}" value="${existing[a.key]??''}">`).join('');
+  }
+  return '';
+}
+function collectResult(testId){
+  const t = testById(testId);
+  if(t.kind==='bloodgroup'){
+    return { abo: val('rf_abo'), rhesus: val('rf_rhesus'), saline: val('rf_saline'), ahg: val('rf_ahg') };
+  }
+  if(t.kind==='serology'){ return { value: val('rf_value') }; }
+  if(t.kind==='fbc'){ const o={}; FBC_ANALYTES.forEach(a=>o[a.key]=val('rf_'+a.key)); return o; }
+  if(t.kind==='chem'){ const o={}; CHEM_ANALYTES.forEach(a=>o[a.key]=val('rf_'+a.key)); return o; }
+  return {};
+}
+function val(id){ const el = document.getElementById(id); return el ? el.value : ''; }
+
+async function renderSubmit(){
+  const notice = document.getElementById('noRoundNotice');
+  const wrap = document.getElementById('submitFormWrap');
+  const round = ROUNDS.find(r=>String(r.id)===String(selectedRoundId));
+  if(!round){ notice.style.display='block'; wrap.style.display='none'; return; }
+  notice.style.display='none'; wrap.style.display='block';
+
+  const c = countdownInfo(round.deadline);
+  document.getElementById('roundInfoCard').innerHTML = `
+    <strong>${testById(round.testId).name}</strong>
+    <div class="meta" style="margin-top:4px;">SAMPLE ${round.sampleId} · provided by ${facilityName(round.providingFacilityId)}</div>
+    <div class="countdown ${c.cls}" style="margin-top:6px;">${c.status==='closed' ? 'This round is closed.' : c.text}</div>`;
+
+  const mine = await api(`/rounds/${round.id}/submissions/mine`);
+
+  document.getElementById('dateReceived').value = mine?.dateReceived || '';
+  document.getElementById('methodUsed').value = mine?.methodUsed || '';
+  document.getElementById('sampleCondition').value = mine?.sampleCondition || '';
+  document.getElementById('dynamicResultFields').innerHTML = dynamicFieldsHtml(round.testId, mine?.result);
+  document.getElementById('personnelTesting').value = mine?.personnelTesting || '';
+  document.getElementById('personnelVerifying').value = mine?.personnelVerifying || '';
+
+  const closed = c.status === 'closed';
+  const locked = mine?.status === 'submitted';
+  document.getElementById('saveExitBtn').disabled = closed || locked;
+  document.getElementById('submitFinalBtn').disabled = closed || locked;
+  document.getElementById('submitFinalBtn').textContent = locked ? 'Already submitted' : 'Submit final result';
+}
+
+async function saveEntry(finalize){
+  const round = ROUNDS.find(r=>String(r.id)===String(selectedRoundId));
+  if(!round) return;
+  const personnelTesting = val('personnelTesting');
+  const personnelVerifying = val('personnelVerifying');
+  if(finalize && (!personnelTesting || !personnelVerifying)){
+    showToast('Enter both tested-by and verified-by names before final submission.');
+    return;
+  }
+  const body = {
+    dateReceived: val('dateReceived'),
+    methodUsed: val('methodUsed'),
+    sampleCondition: val('sampleCondition'),
+    result: collectResult(round.testId),
+    personnelTesting, personnelVerifying,
+    finalize,
+  };
+  try{
+    await api(`/rounds/${round.id}/submissions/mine`, { method:'PUT', body });
+    showToast(finalize ? 'Result submitted.' : 'Draft saved. You can finish this later.');
+    renderSubmit();
+  }catch(e){ showToast(e.message); }
+}
+document.getElementById('saveExitBtn').addEventListener('click', ()=>saveEntry(false));
+document.getElementById('submitFinalBtn').addEventListener('click', ()=>saveEntry(true));
+
+/* ---------------- USER: My Feedback ---------------- */
+async function renderMyFeedback(){
+  const el = document.getElementById('myFeedbackList');
+  const mySubs = await api('/rounds/mine/feedback');
+  let rows = mySubs
+    .map(sub => ({ round: ROUNDS.find(r=>String(r.id)===String(sub.roundId)), sub }))
+    .filter(r => r.round);
+  if(rows.length===0){ el.innerHTML = '<div class="empty">No submitted results yet.</div>'; return; }
+  el.innerHTML = rows.map(({round,sub})=>{
+    const fb = sub.feedback;
+    const status = fb?.status || 'not_evaluated';
+    const cls = status==='acceptable' ? 'ok' : status==='unacceptable' ? 'alert' : 'neutral';
+    const label = status==='acceptable' ? 'Acceptable' : status==='unacceptable' ? 'Unacceptable' : 'Not Evaluated';
+    return `
+      <div class="card">
+        <div class="row-item" style="border:none; padding-top:0;">
+          <div><strong>${testById(round.testId).name}</strong><div class="meta">SAMPLE ${round.sampleId} · submitted ${new Date(sub.submittedAt).toLocaleDateString()}</div></div>
+          <span class="flag ${cls}">${label}</span>
+        </div>
+        ${fb?.comment ? `<div class="meta" style="margin:6px 0 4px;">Comment: ${fb.comment}</div>` : ''}
+        <button class="secondary small print-fb" data-round="${round.id}" data-sub="${sub.id}">Print / download feedback</button>
+      </div>`;
+  }).join('');
+  el.querySelectorAll('.print-fb').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const roundId = btn.dataset.round, subId = btn.dataset.sub;
+      const {round, sub} = rows.find(r=>String(r.round.id)===roundId && String(r.sub.id)===subId);
+      printFeedback(round, sub);
+    });
+  });
+}
+function printFeedback(round, sub){
+  const fb = sub.feedback || {status:'not_evaluated'};
+  const status = fb.status==='acceptable' ? 'ACCEPTABLE' : fb.status==='unacceptable' ? 'UNACCEPTABLE' : 'NOT EVALUATED';
+  document.getElementById('printArea').innerHTML = `
+    <div style="font-family:Arial,sans-serif; color:#12211F;">
+      <h2 style="margin-bottom:0;">Copperbelt Province Interlaboratory Program</h2>
+      <p style="color:#555; margin-top:2px;">Result Feedback Certificate</p>
+      <hr>
+      <p><strong>Facility:</strong> ${facilityName(sub.facilityId)}</p>
+      <p><strong>Test:</strong> ${testById(round.testId).name}</p>
+      <p><strong>Sample ID:</strong> ${round.sampleId}</p>
+      <p><strong>Submitted result:</strong> ${formatResultSummary(round.testId, sub.result)}</p>
+      <p><strong>Date submitted:</strong> ${new Date(sub.submittedAt).toLocaleString()}</p>
+      <p><strong>Tested by:</strong> ${sub.personnelTesting} &nbsp; <strong>Verified by:</strong> ${sub.personnelVerifying}</p>
+      <hr>
+      <p style="font-size:20px; font-weight:bold;">Status: ${status}</p>
+      ${fb.comment ? `<p><strong>Evaluator comment:</strong> ${fb.comment}</p>` : ''}
+      ${fb.evaluatedBy ? `<p style="color:#555; font-size:12px;">Evaluated by ${fb.evaluatedBy} on ${new Date(fb.evaluatedAt).toLocaleString()}</p>` : ''}
+    </div>`;
+  window.print();
+}
+
+/* ---------------- Init ---------------- */
+(async function init(){
+  const restored = await tryRestoreSession();
+  await initLogin();
+  if(restored){ enterApp(); }
+})();
+</script>
+</body>
+</html>
