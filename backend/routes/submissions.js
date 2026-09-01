@@ -83,11 +83,17 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
     if (!methodUsed || !methodUsed.trim()) {
       return res.status(400).json({ error: 'Method used is required before final submission.' });
     }
+    if (!sampleCondition || !sampleCondition.trim()) {
+      return res.status(400).json({ error: 'Notes on sample condition are required before final submission.' });
+    }
     if (!['accepted', 'rejected'].includes(sampleAcceptability)) {
       return res.status(400).json({ error: 'Indicate whether the sample was accepted or rejected on receipt.' });
     }
     if (sampleAcceptability === 'rejected' && !(sampleRejectionReason || '').trim()) {
       return res.status(400).json({ error: 'A reason is required when a sample is rejected.' });
+    }
+    if (sampleAcceptability === 'rejected' && resultStatus !== 'not_performed') {
+      return res.status(400).json({ error: 'A rejected sample cannot have a reported result — mark the test as not performed.' });
     }
     if (!['reported', 'not_performed'].includes(resultStatus)) {
       return res.status(400).json({ error: 'Indicate whether a result was reported or the test was not performed.' });

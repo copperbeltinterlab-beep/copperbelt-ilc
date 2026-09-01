@@ -291,8 +291,8 @@
             <div><label>Date sample received</label><input type="date" id="dateReceived"></div>
             <div><label>Kit / method used *</label><input type="text" id="methodUsed" placeholder="Required"></div>
           </div>
-          <label>Notes on sample condition (optional)</label>
-          <textarea id="sampleCondition" placeholder="e.g. Received intact, no haemolysis, correct temperature"></textarea>
+          <label>Notes on sample condition *</label>
+          <textarea id="sampleCondition" placeholder="e.g. Correct sample transportation temperature, no leakages observed"></textarea>
 
           <label>Sample acceptability *</label>
           <div class="row2">
@@ -320,8 +320,8 @@
 
           <h3 class="fieldset-title">Personnel</h3>
           <div class="row2">
-            <div><label>Tested by</label><input type="text" id="personnelTesting" placeholder="Name of analyst"></div>
-            <div><label>Verified by</label><input type="text" id="personnelVerifying" placeholder="Name of verifier"></div>
+            <div><label>Tested by *</label><input type="text" id="personnelTesting" placeholder="Name of analyst"></div>
+            <div><label>Verified by *</label><input type="text" id="personnelVerifying" placeholder="Name of verifier"></div>
           </div>
 
           <div class="btn-row">
@@ -970,12 +970,12 @@ async function renderSubmit(){
   document.getElementById('sampleAccepted').checked = mine?.sampleAcceptability === 'accepted';
   document.getElementById('sampleRejected').checked = mine?.sampleAcceptability === 'rejected';
   document.getElementById('sampleRejectionReason').value = mine?.sampleRejectionReason || '';
-  document.getElementById('rejectionReasonWrap').style.display = mine?.sampleAcceptability === 'rejected' ? 'block' : 'none';
 
   const resultStatus = mine?.resultStatus || 'reported';
   document.getElementById('resultReported').checked = resultStatus === 'reported';
   document.getElementById('resultNotPerformed').checked = resultStatus === 'not_performed';
   document.getElementById('notPerformedReason').value = mine?.notPerformedReason || '';
+  applySampleAcceptabilityLock();
   document.getElementById('notPerformedReasonWrap').style.display = resultStatus === 'not_performed' ? 'block' : 'none';
   document.getElementById('dynamicResultFieldsWrap').style.display = resultStatus === 'not_performed' ? 'none' : 'block';
 
@@ -987,11 +987,23 @@ async function renderSubmit(){
 }
 
 document.querySelectorAll('input[name="sampleAcceptability"]').forEach(r=>{
-  r.addEventListener('change', ()=>{
-    document.getElementById('rejectionReasonWrap').style.display =
-      document.getElementById('sampleRejected').checked ? 'block' : 'none';
-  });
+  r.addEventListener('change', applySampleAcceptabilityLock);
 });
+function applySampleAcceptabilityLock(){
+  const rejected = document.getElementById('sampleRejected').checked;
+  document.getElementById('rejectionReasonWrap').style.display = rejected ? 'block' : 'none';
+  document.getElementById('resultReported').disabled = rejected;
+  if(rejected){
+    document.getElementById('resultNotPerformed').checked = true;
+    document.getElementById('notPerformedReasonWrap').style.display = 'block';
+    document.getElementById('dynamicResultFieldsWrap').style.display = 'none';
+    const npr = document.getElementById('notPerformedReason');
+    if(!npr.value.trim()) npr.value = 'Sample rejected on receipt.';
+  }else{
+    // Re-enabling doesn't force a choice back — the analyst picks reported/not performed again.
+    document.querySelectorAll('input[name="resultStatus"]').forEach(el=>el.dispatchEvent(new Event('change')));
+  }
+}
 document.querySelectorAll('input[name="resultStatus"]').forEach(r=>{
   r.addEventListener('change', ()=>{
     const notPerformed = document.getElementById('resultNotPerformed').checked;
@@ -1019,6 +1031,10 @@ async function saveEntry(finalize){
     }
     if(!methodUsed.trim()){
       showToast('Kit / method used is required.');
+      return;
+    }
+    if(!val('sampleCondition').trim()){
+      showToast('Notes on sample condition are required.');
       return;
     }
     if(!sampleAcceptability){
