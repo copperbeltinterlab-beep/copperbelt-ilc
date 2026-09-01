@@ -57,7 +57,8 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
   const round = await getRound(req.params.roundId);
   if (!round) return res.status(404).json({ error: 'Round not found.' });
 
-  const deadlinePassed = new Date(round.deadline + 'T23:59:59') < new Date();
+  const deadlineDateOnly = round.deadline instanceof Date ? round.deadline.toISOString().slice(0, 10) : String(round.deadline).slice(0, 10);
+  const deadlinePassed = new Date(deadlineDateOnly + 'T23:59:59') < new Date();
   if (deadlinePassed) return res.status(403).json({ error: 'This round is closed.' });
 
   const { rows: existingRows } = await pool.query(
@@ -198,7 +199,7 @@ router.patch('/:roundId/deadline', requireAuth, requireRole('facilityadmin'), as
   if (!(reason || '').trim()) return res.status(400).json({ error: 'A reason is required when changing a deadline.' });
 
   const historyEntry = {
-    previousDeadline: round.deadline,
+    previousDeadline: round.deadline instanceof Date ? round.deadline.toISOString().slice(0, 10) : String(round.deadline).slice(0, 10),
     newDeadline,
     reason: reason.trim(),
     changedBy: req.user.name,
@@ -214,7 +215,8 @@ router.patch('/:roundId/deadline', requireAuth, requireRole('facilityadmin'), as
   const r = rows[0];
   res.json({
     id: r.id, testId: r.test_id, sampleId: r.sample_id,
-    providingFacilityId: r.providing_facility_id, deadline: r.deadline,
+    providingFacilityId: r.providing_facility_id,
+    deadline: r.deadline instanceof Date ? r.deadline.toISOString().slice(0, 10) : String(r.deadline).slice(0, 10),
     deadlineHistory: r.deadline_history,
   });
 });

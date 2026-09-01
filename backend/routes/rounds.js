@@ -25,13 +25,19 @@ router.post('/', requireAuth, requireRole('facilityadmin'), async (req, res) => 
   res.json(camel(rows[0]));
 });
 
+function toDateOnly(d) {
+  if (!d) return null;
+  if (d instanceof Date) return d.toISOString().slice(0, 10);
+  return String(d).slice(0, 10);
+}
+
 function camel(r) {
   return {
     id: r.id,
     testId: r.test_id,
     sampleId: r.sample_id,
     providingFacilityId: r.providing_facility_id,
-    deadline: r.deadline,
+    deadline: toDateOnly(r.deadline),
     deadlineHistory: r.deadline_history || [],
   };
 }

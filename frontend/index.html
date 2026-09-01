@@ -406,10 +406,12 @@ function facilityName(id){ const f = FACILITIES.find(x=>x.id===id); return f ? f
 
 /* ---------------- Countdown ---------------- */
 function countdownInfo(deadline){
+  if(!deadline) return {status:'closed', text:'No deadline set', cls:'closed'};
+  const datePart = String(deadline).slice(0, 10); // tolerate either 'YYYY-MM-DD' or a full ISO timestamp
   const now = new Date();
-  const end = new Date(deadline + 'T23:59:59');
+  const end = new Date(datePart + 'T23:59:59');
   const ms = end - now;
-  if(!deadline || isNaN(ms)) return {status:'closed', text:'No deadline set', cls:'closed'};
+  if(isNaN(ms)) return {status:'closed', text:'No deadline set', cls:'closed'};
   if(ms <= 0) return {status:'closed', text:'Closed', cls:'closed'};
   const totalHours = ms / 36e5;
   const days = Math.floor(totalHours/24);
