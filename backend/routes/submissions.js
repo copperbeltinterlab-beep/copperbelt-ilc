@@ -12,6 +12,10 @@ function camel(s) {
     dateReceived: s.date_received,
     methodUsed: s.method_used,
     sampleCondition: s.sample_condition,
+    sampleAcceptability: s.sample_acceptability,
+    sampleRejectionReason: s.sample_rejection_reason,
+    resultStatus: s.result_status,
+    notPerformedReason: s.not_performed_reason,
     result: s.result,
     personnelTesting: s.personnel_testing,
     personnelVerifying: s.personnel_verifying,
@@ -65,10 +69,35 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
     return res.status(403).json({ error: 'Already submitted — this result is locked.' });
   }
 
-  const { dateReceived, methodUsed, sampleCondition, result, personnelTesting, personnelVerifying, finalize } = req.body;
+  const {
+    dateReceived, methodUsed, sampleCondition,
+    sampleAcceptability, sampleRejectionReason,
+    resultStatus, notPerformedReason,
+    result, personnelTesting, personnelVerifying, finalize,
+  } = req.body;
 
-  if (finalize && (!personnelTesting || !personnelVerifying)) {
-    return res.status(400).json({ error: 'Enter both tested-by and verified-by names before final submission.' });
+  if (finalize) {
+    if (!personnelTesting || !personnelVerifying) {
+      return res.status(400).json({ error: 'Enter both tested-by and verified-by names before final submission.' });
+    }
+    if (!methodUsed || !methodUsed.trim()) {
+      return res.status(400).json({ error: 'Method used is required before final submission.' });
+    }
+    if (!['accepted', 'rejected'].includes(sampleAcceptability)) {
+      return res.status(400).json({ error: 'Indicate whether the sample was accepted or rejected on receipt.' });
+    }
+    if (sampleAcceptability === 'rejected' && !(sampleRejectionReason || '').trim()) {
+      return res.status(400).json({ error: 'A reason is required when a sample is rejected.' });
+    }
+    if (!['reported', 'not_performed'].includes(resultStatus)) {
+      return res.status(400).json({ error: 'Indicate whether a result was reported or the test was not performed.' });
+    }
+    if (resultStatus === 'not_performed' && !(notPerformedReason || '').trim()) {
+      return res.status(400).json({ error: 'A reason is required when a test was not performed.' });
+    }
+    if (resultStatus === 'reported' && (!result || Object.keys(result).length === 0)) {
+      return res.status(400).json({ error: 'Enter a result, or mark the test as not performed.' });
+    }
   }
 
   const status = finalize ? 'submitted' : 'draft';
@@ -76,13 +105,18 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
 
   const { rows } = await pool.query(
     `insert into submissions
-       (round_id, facility_id, date_received, method_used, sample_condition, result,
-        personnel_testing, personnel_verifying, status, saved_at, submitted_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9, now(), $10)
+       (round_id, facility_id, date_received, method_used, sample_condition,
+        sample_acceptability, sample_rejection_reason, result_status, not_performed_reason,
+        result, personnel_testing, personnel_verifying, status, saved_at, submitted_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now(), $14)
      on conflict (round_id, facility_id) do update set
        date_received = excluded.date_received,
        method_used = excluded.method_used,
        sample_condition = excluded.sample_condition,
+       sample_acceptability = excluded.sample_acceptability,
+       sample_rejection_reason = excluded.sample_rejection_reason,
+       result_status = excluded.result_status,
+       not_performed_reason = excluded.not_performed_reason,
        result = excluded.result,
        personnel_testing = excluded.personnel_testing,
        personnel_verifying = excluded.personnel_verifying,
@@ -91,7 +125,9 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
        submitted_at = excluded.submitted_at
      returning *`,
     [req.params.roundId, req.user.facilityId, dateReceived || null, methodUsed || null,
-     sampleCondition || null, result || {}, personnelTesting || null, personnelVerifying || null,
+     sampleCondition || null, sampleAcceptability || null, sampleRejectionReason || null,
+     resultStatus || 'reported', notPerformedReason || null,
+     result || {}, personnelTesting || null, personnelVerifying || null,
      status, submittedAt]
   );
   res.json(camel(rows[0]));
@@ -126,6 +162,40 @@ router.post('/:roundId/submissions/:subId/feedback', requireAuth, requireRole('f
   );
   if (!rows[0]) return res.status(404).json({ error: 'Submission not found.' });
   res.json(camel(rows[0]));
+});
+
+// PATCH /api/rounds/:roundId/deadline — Facility Admin extends/reduces the deadline
+// for a round THEIR facility provides. Keeps a visible audit trail of every change.
+router.patch('/:roundId/deadline', requireAuth, requireRole('facilityadmin'), async (req, res) => {
+  const round = await getRound(req.params.roundId);
+  if (!round) return res.status(404).json({ error: 'Round not found.' });
+  if (round.providing_facility_id !== req.user.facilityId) {
+    return res.status(403).json({ error: 'This round belongs to another facility.' });
+  }
+  const { newDeadline, reason } = req.body;
+  if (!newDeadline) return res.status(400).json({ error: 'A new deadline date is required.' });
+  if (!(reason || '').trim()) return res.status(400).json({ error: 'A reason is required when changing a deadline.' });
+
+  const historyEntry = {
+    previousDeadline: round.deadline,
+    newDeadline,
+    reason: reason.trim(),
+    changedBy: req.user.name,
+    changedAt: new Date().toISOString(),
+  };
+  const history = Array.isArray(round.deadline_history) ? round.deadline_history : [];
+  history.push(historyEntry);
+
+  const { rows } = await pool.query(
+    'update rounds set deadline = $1, deadline_history = $2 where id = $3 returning *',
+    [newDeadline, JSON.stringify(history), req.params.roundId]
+  );
+  const r = rows[0];
+  res.json({
+    id: r.id, testId: r.test_id, sampleId: r.sample_id,
+    providingFacilityId: r.providing_facility_id, deadline: r.deadline,
+    deadlineHistory: r.deadline_history,
+  });
 });
 
 module.exports = router;

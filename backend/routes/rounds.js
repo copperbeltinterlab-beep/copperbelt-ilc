@@ -32,6 +32,7 @@ function camel(r) {
     sampleId: r.sample_id,
     providingFacilityId: r.providing_facility_id,
     deadline: r.deadline,
+    deadlineHistory: r.deadline_history || [],
   };
 }
 

@@ -289,13 +289,34 @@
           <h3 class="fieldset-title" style="margin-top:0;">Sample receipt</h3>
           <div class="row2">
             <div><label>Date sample received</label><input type="date" id="dateReceived"></div>
-            <div><label>Kit / method used</label><input type="text" id="methodUsed" placeholder="optional"></div>
+            <div><label>Kit / method used *</label><input type="text" id="methodUsed" placeholder="Required"></div>
           </div>
-          <label>Condition of sample on receipt</label>
+          <label>Notes on sample condition (optional)</label>
           <textarea id="sampleCondition" placeholder="e.g. Received intact, no haemolysis, correct temperature"></textarea>
 
+          <label>Sample acceptability *</label>
+          <div class="row2">
+            <label style="font-weight:400;"><input type="radio" name="sampleAcceptability" value="accepted" id="sampleAccepted" style="width:auto; margin-right:6px;">Accepted</label>
+            <label style="font-weight:400;"><input type="radio" name="sampleAcceptability" value="rejected" id="sampleRejected" style="width:auto; margin-right:6px;">Rejected</label>
+          </div>
+          <div id="rejectionReasonWrap" style="display:none;">
+            <label>Reason for rejection *</label>
+            <textarea id="sampleRejectionReason" placeholder="e.g. Sample leaked in transit, received outside stability window"></textarea>
+          </div>
+
           <h3 class="fieldset-title">Result</h3>
-          <div id="dynamicResultFields"></div>
+          <label>Result status *</label>
+          <div class="row2">
+            <label style="font-weight:400;"><input type="radio" name="resultStatus" value="reported" id="resultReported" style="width:auto; margin-right:6px;">Result reported</label>
+            <label style="font-weight:400;"><input type="radio" name="resultStatus" value="not_performed" id="resultNotPerformed" style="width:auto; margin-right:6px;">Test not performed</label>
+          </div>
+          <div id="notPerformedReasonWrap" style="display:none;">
+            <label>Reason test was not performed *</label>
+            <textarea id="notPerformedReason" placeholder="e.g. Sample rejected on receipt, reagent stock-out, equipment failure"></textarea>
+          </div>
+          <div id="dynamicResultFieldsWrap">
+            <div id="dynamicResultFields"></div>
+          </div>
 
           <h3 class="fieldset-title">Personnel</h3>
           <div class="row2">
@@ -739,8 +760,47 @@ function renderProvide(){
   if(mine.length===0){ el.innerHTML = '<div class="empty">Your facility isn&rsquo;t providing any rounds yet.</div>'; return; }
   el.innerHTML = mine.map(r=>{
     const c = countdownInfo(r.deadline);
-    return `<div class="row-item"><div><strong>${testById(r.testId).name}</strong><div class="meta">SAMPLE ${r.sampleId}</div></div><span class="badge ${c.cls}">${c.label || 'Closed'}</span></div>`;
+    const history = r.deadlineHistory || [];
+    return `<div class="row-item" style="flex-wrap:wrap; gap:8px; align-items:flex-start;">
+      <div>
+        <strong>${testById(r.testId).name}</strong>
+        <div class="meta">SAMPLE ${r.sampleId} · Deadline: ${r.deadline}</div>
+        ${history.length ? `<div class="meta" style="margin-top:4px;">
+          <a href="#" class="view-deadline-history" data-id="${r.id}">${history.length} deadline change${history.length===1?'':'s'} — view history</a>
+        </div>` : ''}
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <span class="badge ${c.cls}">${c.label || 'Closed'}</span>
+        <button class="secondary small edit-deadline" data-id="${r.id}">Change deadline</button>
+      </div>
+    </div>`;
   }).join('');
+
+  el.querySelectorAll('.edit-deadline').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const r = ROUNDS.find(x=>x.id===Number(btn.dataset.id));
+      const newDeadline = prompt(`Current deadline: ${r.deadline}\nEnter new deadline (YYYY-MM-DD):`, r.deadline);
+      if(!newDeadline) return;
+      const reason = prompt('Reason for changing this deadline (required, visible in the audit history):');
+      if(!reason || !reason.trim()){ showToast('A reason is required to change a deadline.'); return; }
+      try{
+        const updated = await api(`/rounds/${r.id}/deadline`, { method:'PATCH', body:{ newDeadline, reason } });
+        Object.assign(r, updated);
+        showToast('Deadline updated.');
+        renderProvide();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+  el.querySelectorAll('.view-deadline-history').forEach(link=>{
+    link.addEventListener('click', (e)=>{
+      e.preventDefault();
+      const r = ROUNDS.find(x=>x.id===Number(link.dataset.id));
+      const lines = (r.deadlineHistory || []).map(h=>
+        `${h.changedAt.slice(0,10)} — ${h.previousDeadline} → ${h.newDeadline} (by ${h.changedBy})\nReason: ${h.reason}`
+      ).join('\n\n');
+      alert(`Deadline change history for SAMPLE ${r.sampleId}:\n\n${lines}`);
+    });
+  });
 }
 document.getElementById('addRoundBtn').addEventListener('click', async ()=>{
   const testId = document.getElementById('newRoundTest').value;
@@ -776,12 +836,23 @@ async function renderFeedbackSubmissions(roundId){
   const all = await api(`/rounds/${roundId}/submissions`);
   const subs = all.filter(s=>s.status==='submitted');
   if(!round || subs.length===0){ el.innerHTML = '<div class="empty">No submitted results yet for this round.</div>'; return; }
-  el.innerHTML = subs.map(s=>`
+  el.innerHTML = subs.map(s=>{
+    const acceptBadge = s.sampleAcceptability === 'rejected'
+      ? `<span class="badge" style="background:#fde2e2;color:#8a1f1f;">Sample Rejected</span>`
+      : s.sampleAcceptability === 'accepted'
+      ? `<span class="badge" style="background:#e3f3ea;color:#0d3b30;">Sample Accepted</span>`
+      : '';
+    const resultLine = s.resultStatus === 'not_performed'
+      ? `<div class="meta" style="margin-bottom:4px; color:#8a1f1f;">Test not performed — ${s.notPerformedReason || 'no reason given'}</div>`
+      : `<div class="meta" style="margin-bottom:8px;">${formatResultSummary(round.testId, s.result)}</div>`;
+    return `
     <div class="card">
       <div class="row-item" style="border:none; padding-top:0;">
         <div><strong>${facilityName(s.facilityId)}</strong><div class="meta">Submitted ${new Date(s.submittedAt).toLocaleString()}</div></div>
+        ${acceptBadge}
       </div>
-      <div class="meta" style="margin-bottom:8px;">${formatResultSummary(round.testId, s.result)}</div>
+      ${s.sampleAcceptability === 'rejected' ? `<div class="meta" style="margin-bottom:4px; color:#8a1f1f;">Rejection reason: ${s.sampleRejectionReason || '—'}</div>` : ''}
+      ${resultLine}
       <label>Feedback status</label>
       <select class="fb-status" data-sub="${s.id}">
         <option value="not_evaluated" ${s.feedback?.status==='not_evaluated'||!s.feedback?'selected':''}>Not Evaluated</option>
@@ -791,7 +862,8 @@ async function renderFeedbackSubmissions(roundId){
       <label>Comment</label>
       <textarea class="fb-comment" data-sub="${s.id}">${s.feedback?.comment||''}</textarea>
       <button class="primary small save-fb" data-sub="${s.id}" data-round="${roundId}">Save feedback</button>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   el.querySelectorAll('.save-fb').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const subId = btn.dataset.sub, rId = btn.dataset.round;
@@ -895,6 +967,18 @@ async function renderSubmit(){
   document.getElementById('personnelTesting').value = mine?.personnelTesting || '';
   document.getElementById('personnelVerifying').value = mine?.personnelVerifying || '';
 
+  document.getElementById('sampleAccepted').checked = mine?.sampleAcceptability === 'accepted';
+  document.getElementById('sampleRejected').checked = mine?.sampleAcceptability === 'rejected';
+  document.getElementById('sampleRejectionReason').value = mine?.sampleRejectionReason || '';
+  document.getElementById('rejectionReasonWrap').style.display = mine?.sampleAcceptability === 'rejected' ? 'block' : 'none';
+
+  const resultStatus = mine?.resultStatus || 'reported';
+  document.getElementById('resultReported').checked = resultStatus === 'reported';
+  document.getElementById('resultNotPerformed').checked = resultStatus === 'not_performed';
+  document.getElementById('notPerformedReason').value = mine?.notPerformedReason || '';
+  document.getElementById('notPerformedReasonWrap').style.display = resultStatus === 'not_performed' ? 'block' : 'none';
+  document.getElementById('dynamicResultFieldsWrap').style.display = resultStatus === 'not_performed' ? 'none' : 'block';
+
   const closed = c.status === 'closed';
   const locked = mine?.status === 'submitted';
   document.getElementById('saveExitBtn').disabled = closed || locked;
@@ -902,20 +986,64 @@ async function renderSubmit(){
   document.getElementById('submitFinalBtn').textContent = locked ? 'Already submitted' : 'Submit final result';
 }
 
+document.querySelectorAll('input[name="sampleAcceptability"]').forEach(r=>{
+  r.addEventListener('change', ()=>{
+    document.getElementById('rejectionReasonWrap').style.display =
+      document.getElementById('sampleRejected').checked ? 'block' : 'none';
+  });
+});
+document.querySelectorAll('input[name="resultStatus"]').forEach(r=>{
+  r.addEventListener('change', ()=>{
+    const notPerformed = document.getElementById('resultNotPerformed').checked;
+    document.getElementById('notPerformedReasonWrap').style.display = notPerformed ? 'block' : 'none';
+    document.getElementById('dynamicResultFieldsWrap').style.display = notPerformed ? 'none' : 'block';
+  });
+});
+
 async function saveEntry(finalize){
   const round = ROUNDS.find(r=>String(r.id)===String(selectedRoundId));
   if(!round) return;
   const personnelTesting = val('personnelTesting');
   const personnelVerifying = val('personnelVerifying');
-  if(finalize && (!personnelTesting || !personnelVerifying)){
-    showToast('Enter both tested-by and verified-by names before final submission.');
-    return;
+  const methodUsed = val('methodUsed');
+  const sampleAcceptability = document.getElementById('sampleAccepted').checked ? 'accepted'
+    : document.getElementById('sampleRejected').checked ? 'rejected' : null;
+  const sampleRejectionReason = val('sampleRejectionReason');
+  const resultStatus = document.getElementById('resultNotPerformed').checked ? 'not_performed' : 'reported';
+  const notPerformedReason = val('notPerformedReason');
+
+  if(finalize){
+    if(!personnelTesting || !personnelVerifying){
+      showToast('Enter both tested-by and verified-by names before final submission.');
+      return;
+    }
+    if(!methodUsed.trim()){
+      showToast('Kit / method used is required.');
+      return;
+    }
+    if(!sampleAcceptability){
+      showToast('Indicate whether the sample was accepted or rejected on receipt.');
+      return;
+    }
+    if(sampleAcceptability === 'rejected' && !sampleRejectionReason.trim()){
+      showToast('Enter a reason for rejecting the sample.');
+      return;
+    }
+    if(resultStatus === 'not_performed' && !notPerformedReason.trim()){
+      showToast('Enter a reason the test was not performed.');
+      return;
+    }
   }
+
   const body = {
     dateReceived: val('dateReceived'),
-    methodUsed: val('methodUsed'),
+    methodUsed,
     sampleCondition: val('sampleCondition'),
-    result: collectResult(round.testId),
+    sampleAcceptability,
+    sampleRejectionReason,
+    resultStatus,
+    notPerformedReason,
+    result: resultStatus === 'not_performed' ? {} : collectResult(round.testId),
     personnelTesting, personnelVerifying,
     finalize,
   };
