@@ -80,6 +80,9 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
     if (!personnelTesting || !personnelVerifying) {
       return res.status(400).json({ error: 'Enter both tested-by and verified-by names before final submission.' });
     }
+    if (!dateReceived) {
+      return res.status(400).json({ error: 'Date sample received is required before final submission.' });
+    }
     if (!methodUsed || !methodUsed.trim()) {
       return res.status(400).json({ error: 'Method used is required before final submission.' });
     }
@@ -139,7 +142,19 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
   res.json(camel(rows[0]));
 });
 
-// GET /api/my-feedback — a Facility User's own submitted results + feedback, across all rounds
+// GET /api/rounds/mine/status — a Facility User's submission status (submitted / draft / none)
+// across every round, so Active Rounds can show "Results Submitted" / "Results Not Submitted".
+router.get('/mine/status', requireAuth, requireRole('user'), async (req, res) => {
+  const { rows } = await pool.query(
+    'select round_id, status from submissions where facility_id = $1',
+    [req.user.facilityId]
+  );
+  const map = {};
+  rows.forEach(r => { map[r.round_id] = r.status; }); // 'submitted' or 'draft'
+  res.json(map);
+});
+
+// GET /api/rounds/mine/feedback — a Facility User's own submitted results + feedback, across all rounds
 router.get('/mine/feedback', requireAuth, requireRole('user'), async (req, res) => {
   const { rows } = await pool.query(
     `select * from submissions where facility_id = $1 and status = 'submitted' order by submitted_at desc`,

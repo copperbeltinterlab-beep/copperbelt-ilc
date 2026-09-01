@@ -288,7 +288,7 @@
         <div class="card">
           <h3 class="fieldset-title" style="margin-top:0;">Sample receipt</h3>
           <div class="row2">
-            <div><label>Date sample received</label><input type="date" id="dateReceived"></div>
+            <div><label>Date sample received *</label><input type="date" id="dateReceived"></div>
             <div><label>Kit / method used *</label><input type="text" id="methodUsed" placeholder="Required"></div>
           </div>
           <label>Notes on sample condition *</label>
@@ -409,6 +409,7 @@ function countdownInfo(deadline){
   const now = new Date();
   const end = new Date(deadline + 'T23:59:59');
   const ms = end - now;
+  if(!deadline || isNaN(ms)) return {status:'closed', text:'No deadline set', cls:'closed'};
   if(ms <= 0) return {status:'closed', text:'Closed', cls:'closed'};
   const totalHours = ms / 36e5;
   const days = Math.floor(totalHours/24);
@@ -516,6 +517,9 @@ async function loadAllData(){
   ROUNDS = await api('/rounds');
   if(session.role === 'superadmin' || session.role === 'facilityadmin'){
     USERS = await api('/users');
+  }
+  if(session.role === 'user'){
+    MY_SUBMISSION_STATUS = await api('/rounds/mine/status');
   }
   renderCurrentTab();
 }
@@ -886,22 +890,30 @@ function formatResultSummary(testId, result){
 }
 
 /* ---------------- USER: Active Rounds ---------------- */
+let MY_SUBMISSION_STATUS = {}; // roundId -> 'submitted' | 'draft'
 function renderRounds(){
   const el = document.getElementById('roundsList');
   if(ROUNDS.length===0){ el.innerHTML = '<div class="empty">No rounds have been created yet.</div>'; return; }
   el.innerHTML = '';
   ROUNDS.forEach(r=>{
     const c = countdownInfo(r.deadline);
+    const subStatus = MY_SUBMISSION_STATUS[r.id];
+    const subBadge = subStatus === 'submitted'
+      ? `<span class="badge" style="background:#e3f3ea;color:#0d3b30;">Results Submitted</span>`
+      : `<span class="badge" style="background:#fde2e2;color:#8a1f1f;">Results Not Submitted</span>`;
     const div = document.createElement('div');
     div.className = 'card round-card' + (String(r.id)===String(selectedRoundId) ? ' selected' : '');
     div.innerHTML = `
-      <div class="row-item" style="border:none; padding:0;">
+      <div class="row-item" style="border:none; padding:0; flex-wrap:wrap; gap:6px;">
         <div>
           <strong>${testById(r.testId).name}</strong>
           <div class="meta">SAMPLE ${r.sampleId} · provided by ${facilityName(r.providingFacilityId)}</div>
-          <div class="countdown ${c.cls}">${c.status==='closed' ? 'Closed' : c.text}</div>
+          <div class="countdown ${c.cls}">${c.status==='closed' ? (c.text==='No deadline set' ? c.text : 'Closed') : c.text}</div>
         </div>
-        <span class="badge ${c.cls}">${c.status==='closed' ? 'Closed' : c.label}</span>
+        <div style="display:flex; gap:6px; align-items:center;">
+          ${subBadge}
+          <span class="badge ${c.cls}">${c.status==='closed' ? 'Closed' : c.label}</span>
+        </div>
       </div>`;
     div.addEventListener('click', ()=>{ selectedRoundId = r.id; renderRounds(); showToast(`Selected: ${testById(r.testId).name}`); });
     el.appendChild(div);
@@ -1029,6 +1041,10 @@ async function saveEntry(finalize){
       showToast('Enter both tested-by and verified-by names before final submission.');
       return;
     }
+    if(!val('dateReceived')){
+      showToast('Date sample received is required.');
+      return;
+    }
     if(!methodUsed.trim()){
       showToast('Kit / method used is required.');
       return;
@@ -1066,6 +1082,7 @@ async function saveEntry(finalize){
   try{
     await api(`/rounds/${round.id}/submissions/mine`, { method:'PUT', body });
     showToast(finalize ? 'Result submitted.' : 'Draft saved. You can finish this later.');
+    MY_SUBMISSION_STATUS[round.id] = finalize ? 'submitted' : 'draft';
     renderSubmit();
   }catch(e){ showToast(e.message); }
 }
