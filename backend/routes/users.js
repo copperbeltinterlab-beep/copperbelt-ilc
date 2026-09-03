@@ -19,6 +19,15 @@ function publicUser(u) {
 function randomToken() {
   return crypto.randomBytes(32).toString('hex');
 }
+const MAX_FACILITY_ADMINS = 2;
+async function facilityAdminCount(facilityId, excludeUserId) {
+  const { rows } = await pool.query(
+    `select count(*)::int as count from users
+     where facility_id = $1 and role = 'facilityadmin' and id != coalesce($2, -1)`,
+    [facilityId, excludeUserId || null]
+  );
+  return rows[0].count;
+}
 
 // GET /api/users
 // Super Admin: everyone. Facility Admin: only their own facility's users.
@@ -55,6 +64,12 @@ router.post('/', requireAuth, requireRole('superadmin', 'facilityadmin'), async 
     }
     if (role !== 'superadmin' && !facilityId) {
       return res.status(400).json({ error: 'A facility is required for this role.' });
+    }
+    if (role === 'facilityadmin') {
+      const count = await facilityAdminCount(facilityId);
+      if (count >= MAX_FACILITY_ADMINS) {
+        return res.status(409).json({ error: `This facility already has ${MAX_FACILITY_ADMINS} Facility Admins — the maximum allowed.` });
+      }
     }
   }
 
@@ -144,6 +159,12 @@ router.patch('/:id/role', requireAuth, requireRole('superadmin'), async (req, re
   if (Number(req.params.id) === req.user.id) {
     return res.status(403).json({ error: 'You cannot change your own role.' });
   }
+  if (role === 'facilityadmin') {
+    const count = await facilityAdminCount(facilityId, Number(req.params.id));
+    if (count >= MAX_FACILITY_ADMINS) {
+      return res.status(409).json({ error: `This facility already has ${MAX_FACILITY_ADMINS} Facility Admins — the maximum allowed.` });
+    }
+  }
 
   const { rows: existingRows } = await pool.query('select * from users where id = $1', [req.params.id]);
   if (!existingRows[0]) return res.status(404).json({ error: 'User not found.' });
@@ -176,6 +197,17 @@ router.delete('/:id', requireAuth, requireRole('superadmin', 'facilityadmin'), a
 
   await pool.query('delete from users where id = $1', [req.params.id]);
   res.json({ deleted: true });
+});
+
+// GET /api/users/facility-admin-counts — Super Admin only. Map of facilityId -> current
+// Facility Admin count, used by the "Add User" form to grey out the option at the cap.
+router.get('/facility-admin-counts', requireAuth, requireRole('superadmin'), async (req, res) => {
+  const { rows } = await pool.query(
+    `select facility_id, count(*)::int as count from users where role = 'facilityadmin' group by facility_id`
+  );
+  const map = {};
+  rows.forEach(r => { map[r.facility_id] = r.count; });
+  res.json(map);
 });
 
 module.exports = router;

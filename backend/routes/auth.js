@@ -71,6 +71,13 @@ router.post('/login', async (req, res) => {
   const user = rows[0];
   if (!user) return res.status(401).json({ error: 'Incorrect username or password.' });
 
+  if (user.facility_id) {
+    const { rows: facRows } = await pool.query('select active from facilities where id = $1', [user.facility_id]);
+    if (facRows[0] && facRows[0].active === false) {
+      return res.status(403).json({ error: 'Your facility has been disabled by the Super Admin. Contact them for assistance.' });
+    }
+  }
+
   if (user.status === 'pending_activation') {
     return res.status(403).json({ error: 'This account is pending activation. Check your email for the activation link, or ask your administrator to resend it.' });
   }
@@ -95,6 +102,12 @@ router.get('/me', requireAuth, async (req, res) => {
   const { rows } = await pool.query('select * from users where id = $1', [req.user.id]);
   const user = rows[0];
   if (!user || user.status !== 'active') return res.status(401).json({ error: 'Account no longer available.' });
+  if (user.facility_id) {
+    const { rows: facRows } = await pool.query('select active from facilities where id = $1', [user.facility_id]);
+    if (facRows[0] && facRows[0].active === false) {
+      return res.status(401).json({ error: 'Your facility has been disabled.' });
+    }
+  }
   res.json({ user: publicUser(user) });
 });
 

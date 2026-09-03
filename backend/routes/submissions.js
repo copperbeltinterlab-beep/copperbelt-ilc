@@ -43,8 +43,8 @@ router.get('/:roundId/submissions', requireAuth, requireRole('facilityadmin'), a
   res.json(rows.map(camel));
 });
 
-// GET /api/rounds/:roundId/submissions/mine — a Facility User's own draft/submission for a round
-router.get('/:roundId/submissions/mine', requireAuth, requireRole('user'), async (req, res) => {
+// GET /api/rounds/:roundId/submissions/mine — a Facility User's or Facility Admin's own draft/submission for a round
+router.get('/:roundId/submissions/mine', requireAuth, requireRole('user', 'facilityadmin'), async (req, res) => {
   const { rows } = await pool.query(
     'select * from submissions where round_id = $1 and facility_id = $2',
     [req.params.roundId, req.user.facilityId]
@@ -53,7 +53,8 @@ router.get('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
 });
 
 // PUT /api/rounds/:roundId/submissions/mine — save draft or submit final result
-router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async (req, res) => {
+// Facility Users and Facility Admins can both submit results for their own facility.
+router.put('/:roundId/submissions/mine', requireAuth, requireRole('user', 'facilityadmin'), async (req, res) => {
   const round = await getRound(req.params.roundId);
   if (!round) return res.status(404).json({ error: 'Round not found.' });
 
@@ -145,7 +146,7 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
 
 // GET /api/rounds/mine/status — a Facility User's submission status (submitted / draft / none)
 // across every round, so Active Rounds can show "Results Submitted" / "Results Not Submitted".
-router.get('/mine/status', requireAuth, requireRole('user'), async (req, res) => {
+router.get('/mine/status', requireAuth, requireRole('user', 'facilityadmin'), async (req, res) => {
   const { rows } = await pool.query(
     'select round_id, status from submissions where facility_id = $1',
     [req.user.facilityId]
@@ -155,43 +156,99 @@ router.get('/mine/status', requireAuth, requireRole('user'), async (req, res) =>
   res.json(map);
 });
 
-// GET /api/rounds/mine/feedback — a Facility User's own submitted results + feedback, across all rounds
-router.get('/mine/feedback', requireAuth, requireRole('user'), async (req, res) => {
+// GET /api/rounds/mine/feedback — a Facility User's own submitted results + feedback, across all rounds.
+// Only shows feedback that has been fully authorized (dual sign-off complete) — a verified-only
+// result is still under internal review and stays hidden from the submitting facility until then.
+router.get('/mine/feedback', requireAuth, requireRole('user', 'facilityadmin'), async (req, res) => {
   const { rows } = await pool.query(
     `select * from submissions where facility_id = $1 and status = 'submitted' order by submitted_at desc`,
     [req.user.facilityId]
   );
-  res.json(rows.map(camel));
+  const visible = rows.map(camel).map(s => {
+    if (s.feedback && !s.feedback.released) {
+      return { ...s, feedback: null }; // hide unreleased (verified-but-not-yet-authorized) feedback
+    }
+    return s;
+  });
+  res.json(visible);
 });
 
-// POST /api/rounds/:roundId/submissions/:subId/feedback — Facility Admin evaluates a result
+// POST /api/rounds/:roundId/submissions/:subId/feedback — Facility Admin evaluates a result.
+// Two-person sign-off: one admin "verifies" (records a provisional assessment), then a
+// DIFFERENT admin at the same facility "authorizes" it, which releases it to the submitting
+// facility. This mirrors the verified-by / authorized-by dual-control used in accredited labs.
 router.post('/:roundId/submissions/:subId/feedback', requireAuth, requireRole('facilityadmin'), async (req, res) => {
   const round = await getRound(req.params.roundId);
   if (!round) return res.status(404).json({ error: 'Round not found.' });
   if (round.providing_facility_id !== req.user.facilityId) {
     return res.status(403).json({ error: 'This round belongs to another facility.' });
   }
-  const { status, comment } = req.body;
+  const { action, status, comment } = req.body;
+
+  const { rows: subRows } = await pool.query(
+    'select * from submissions where id = $1 and round_id = $2',
+    [req.params.subId, req.params.roundId]
+  );
+  const existing = subRows[0];
+  if (!existing) return res.status(404).json({ error: 'Submission not found.' });
+  const existingFeedback = existing.feedback || {};
+
+  if (action === 'authorize') {
+    if (!existingFeedback.verifiedBy) {
+      return res.status(400).json({ error: 'This result must be verified before it can be authorized.' });
+    }
+    if (existingFeedback.verifiedBy === req.user.name) {
+      return res.status(403).json({ error: 'A different Facility Admin must authorize this — the same person cannot both verify and authorize.' });
+    }
+    const feedback = {
+      ...existingFeedback,
+      authorizedBy: req.user.name,
+      authorizedAt: new Date().toISOString(),
+      released: true,
+    };
+    const { rows } = await pool.query(
+      `update submissions set feedback = $1 where id = $2 and round_id = $3 returning *`,
+      [feedback, req.params.subId, req.params.roundId]
+    );
+    return res.json(camel(rows[0]));
+  }
+
+  // Default action: 'verify' (or omitted, for backward compatibility)
   if (!['acceptable', 'unacceptable', 'not_evaluated'].includes(status)) {
     return res.status(400).json({ error: 'Invalid feedback status.' });
   }
-  const feedback = status === 'not_evaluated'
-    ? null
-    : { status, comment: comment || '', evaluatedBy: req.user.name, evaluatedAt: new Date().toISOString() };
+  if (status === 'not_evaluated') {
+    const { rows } = await pool.query(
+      `update submissions set feedback = null where id = $1 and round_id = $2 returning *`,
+      [req.params.subId, req.params.roundId]
+    );
+    return res.json(camel(rows[0]));
+  }
+  const feedback = {
+    status,
+    comment: comment || '',
+    verifiedBy: req.user.name,
+    verifiedAt: new Date().toISOString(),
+    authorizedBy: null,
+    authorizedAt: null,
+    released: false,
+  };
   const { rows } = await pool.query(
     `update submissions set feedback = $1 where id = $2 and round_id = $3 returning *`,
     [feedback, req.params.subId, req.params.roundId]
   );
-  if (!rows[0]) return res.status(404).json({ error: 'Submission not found.' });
   res.json(camel(rows[0]));
 });
 
-// PATCH /api/rounds/:roundId/deadline — Facility Admin extends/reduces the deadline
-// for a round THEIR facility provides. Keeps a visible audit trail of every change.
-router.patch('/:roundId/deadline', requireAuth, requireRole('facilityadmin'), async (req, res) => {
+// PATCH /api/rounds/:roundId/deadline — extend/reduce a round's deadline.
+// Facility Admins may only do this for rounds THEIR facility provides.
+// Super Admins may do this for ANY round (oversight of all ILC rounds), but — per
+// policy — Super Admins cannot create rounds (see rounds.js: only facilityadmin can POST).
+// Every change is logged to a visible audit trail regardless of who made it.
+router.patch('/:roundId/deadline', requireAuth, requireRole('facilityadmin', 'superadmin'), async (req, res) => {
   const round = await getRound(req.params.roundId);
   if (!round) return res.status(404).json({ error: 'Round not found.' });
-  if (round.providing_facility_id !== req.user.facilityId) {
+  if (req.user.role === 'facilityadmin' && round.providing_facility_id !== req.user.facilityId) {
     return res.status(403).json({ error: 'This round belongs to another facility.' });
   }
   const { newDeadline, reason } = req.body;

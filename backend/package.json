@@ -1,7 +1,7 @@
 {
   "name": "copperbelt-ilc-backend",
   "version": "1.0.0",
-  "description": "API backend for the Copperbelt Province Interlaboratory Program",
+  "description": "API backend for the Copperbelt Province Interlaboratory Programme",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
