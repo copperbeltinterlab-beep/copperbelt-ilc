@@ -88,6 +88,182 @@
     #printArea, #printArea *{visibility:visible;}
     #printArea{display:block; position:absolute; top:0; left:0; width:100%; padding:30px;}
   }
+
+
+  /* ===== PUBLIC HOME — MATCHES REFERENCE SCREENSHOT ===== */
+  header.top{height:54px; padding:0 14px;}
+  .top-inner{height:54px; max-width:1020px; margin:0 auto;}
+  .brandmark{font-size:13px; line-height:1.05;}
+  .brandmark img{height:25px !important; width:auto !important;}
+  .brandmark .tag{font-size:9px; letter-spacing:.16em; margin-bottom:1px;}
+  #whoBox{display:none !important;}
+
+  nav.public-navbar{
+    display:block;
+    width:min(800px, calc(100% - 16px));
+    height:35px;
+    margin:0 auto;
+    background:#fff;
+    border-bottom:1px solid var(--line);
+  }
+  .public-navbar-inner{
+    height:35px;
+    display:flex;
+    justify-content:center;
+    align-items:stretch;
+    gap:0;
+  }
+  .public-nav-link{
+    height:35px;
+    min-width:58px;
+    padding:0 12px;
+    background:none;
+    border:none;
+    border-bottom:1px solid transparent;
+    color:var(--muted);
+    font-family:'Inter',sans-serif;
+    font-size:10.5px;
+    font-weight:500;
+    cursor:pointer;
+  }
+  .public-nav-link.active{
+    color:var(--teal);
+    border-bottom-color:var(--gold);
+  }
+
+  .public-home{
+    width:min(800px, calc(100% - 16px));
+    margin:20px auto 0;
+    padding:0 0 40px;
+  }
+  .public-home .hero{
+    background:#164f4a;
+    color:#fff;
+    border-radius:13px;
+    height:303px;
+    padding:32px 24px 20px;
+    text-align:center;
+  }
+  .public-home .ministry{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:9px;
+    letter-spacing:.17em;
+    color:#d5b76e;
+    margin-bottom:5px;
+  }
+  .public-home .province{
+    font-size:11px;
+    color:#dfe9e6;
+  }
+  .public-home h1{
+    margin:22px 0 6px;
+    font-family:'Inter',sans-serif;
+    font-size:34px;
+    line-height:1.08;
+    font-weight:800;
+    color:#fff;
+  }
+  .public-home .tagline{
+    font-size:15px;
+    line-height:1.2;
+    color:#fff;
+    margin-bottom:15px;
+  }
+  .public-home .hero p{
+    margin:0 auto 11px;
+    color:#eef4f2;
+    font-size:12.5px;
+    line-height:1.72;
+    max-width:690px;
+  }
+  .public-home .hero p:last-child{margin-bottom:0;}
+
+  .audience-grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:9px;
+    margin-top:14px;
+  }
+  .audience-card,
+  .statement-card,
+  .contact-card{
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:10px;
+  }
+  .audience-card{
+    height:108px;
+    padding:17px 10px;
+    text-align:center;
+  }
+  .audience-card h2{
+    margin:0 0 13px;
+    color:#082f2d;
+    font-size:14px;
+    font-weight:700;
+  }
+  .audience-card p{
+    margin:0;
+    color:#172522;
+    font-size:11.5px;
+    line-height:1.45;
+  }
+  .statement-card{
+    height:51px;
+    margin-top:11px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:0 12px;
+    color:#082f2d;
+    text-align:center;
+    font-size:11.5px;
+    font-weight:600;
+  }
+  .contact-card{
+    height:64px;
+    margin-top:10px;
+    padding:12px 10px;
+    text-align:center;
+  }
+  .contact-card h2{
+    margin:0 0 7px;
+    color:#082f2d;
+    font-size:11.5px;
+    font-weight:600;
+  }
+  .contact-card p{margin:0;}
+  .contact-card a{
+    color:#082f2d;
+    text-decoration:none;
+    font-size:11.5px;
+    font-weight:700;
+  }
+  .cta-wrap{
+    text-align:center;
+    margin-top:20px;
+  }
+  .home-cta{
+    height:32px;
+    padding:0 15px;
+    background:#b88f47;
+    color:#173b38;
+    border:none;
+    border-radius:7px;
+    font-size:10.5px;
+    font-weight:500;
+    cursor:pointer;
+  }
+
+  @media(max-width:600px){
+    .public-home{margin-top:14px;}
+    .public-home .hero{height:auto; min-height:303px; padding:30px 18px 22px;}
+    .public-home h1{font-size:28px;}
+    .desktop-break{display:none;}
+    .audience-grid{grid-template-columns:1fr;}
+    .audience-card{height:auto; min-height:108px;}
+  }
+
 </style>
 </head>
 <body>
@@ -104,47 +280,51 @@
       <button class="secondary small" id="changePwBtn">Change password</button>
       <button class="logout-btn" id="logoutBtn">Log out</button>
     </div>
-    <div class="who" id="publicNav">
-      <button class="secondary small" id="publicHomeTabBtn">Home</button>
-      <button class="primary small" id="publicLoginTabBtn">Log In</button>
-    </div>
   </div>
 </header>
 
+<nav class="public-navbar" id="publicNav" aria-label="Public navigation">
+  <div class="public-navbar-inner">
+    <button id="publicHomeTabBtn" class="public-nav-link active">Home</button>
+    <button id="publicLoginTabBtn" class="public-nav-link">Log in</button>
+  </div>
+</nav>
+
 <!-- ================= PUBLIC HOME ================= -->
-<div class="login-wrap" id="homeScreen" style="max-width:800px;">
-  <div style="background:#0d3b30; color:#fff; border-radius:10px; padding:36px 28px; text-align:center; margin-bottom:20px;">
-    <div style="font-size:12px; letter-spacing:2px; color:#cfe3da;">MINISTRY OF HEALTH, ZAMBIA</div>
-    <div style="font-size:14px; color:#cfe3da; margin-top:4px;">Copperbelt Province</div>
-    <h1 style="margin:14px 0 8px; color:#fff; font-size:30px; font-weight:800;">Copperbelt Interlaboratory Comparison Programme</h1>
-    <div style="font-weight:700; color:#d8a13a; margin-bottom:20px; font-size:16px;">Compare. Evaluate. Improve.</div>
-    <p style="color:#e4efe9; line-height:1.7; max-width:640px; margin:0 auto 14px;">A Ministry of Health, Zambia programme supporting medical laboratories across the Copperbelt to strengthen quality, reliability, and continual improvement through Interlaboratory Comparison (ILC).</p>
-    <p style="color:#e4efe9; line-height:1.7; max-width:640px; margin:0 auto;">The programme provides a centralized platform for laboratories to receive samples, submit examination results, and receive professional performance feedback, supporting quality requirements of ISO 15189:2022.</p>
+<div class="public-home" id="homeScreen">
+  <section class="hero">
+    <div class="ministry">MINISTRY OF HEALTH, ZAMBIA</div>
+    <div class="province">Copperbelt Province</div>
+    <h1>Copperbelt Interlaboratory Comparison<br class="desktop-break"> Programme</h1>
+    <div class="tagline">Compare. Evaluate. Improve.</div>
+    <p>A Ministry of Health, Zambia programme supporting medical laboratories across the Copperbelt to strengthen<br class="desktop-break"> quality, reliability, and continual improvement through Interlaboratory Comparison (ILC).</p>
+    <p>The programme provides a centralized platform for laboratories to receive samples, submit examination results,<br class="desktop-break"> and receive professional performance feedback, supporting quality requirements of ISO 15189:2022.</p>
+  </section>
+
+  <div class="audience-grid">
+    <section class="audience-card">
+      <h2>Government/Public Laboratories</h2>
+      <p>Participating public-sector laboratories connected through a<br class="desktop-break"> structured comparison programme.</p>
+      <div id="publicGovLabs" hidden></div>
+    </section>
+    <section class="audience-card">
+      <h2>Private Medical Laboratories</h2>
+      <p>Participating private laboratories contributing to shared quality<br class="desktop-break"> improvement and performance comparison.</p>
+      <div id="publicPrivateLabs" hidden></div>
+    </section>
   </div>
 
-  <h3 class="subsection" style="text-align:center; margin:0 0 12px;">Participating Laboratories</h3>
-  <div class="grid2 split" style="margin-bottom:20px;">
-    <div class="card" style="text-align:center;">
-      <h4 style="margin-bottom:8px; color:#0d3b30;">Government/Public Laboratories</h4>
-      <div id="publicGovLabs" class="meta">Loading…</div>
-    </div>
-    <div class="card" style="text-align:center;">
-      <h4 style="margin-bottom:8px; color:#0d3b30;">Private Medical Laboratories</h4>
-      <div id="publicPrivateLabs" class="meta">Loading…</div>
-    </div>
+  <div class="statement-card">
+    Strengthening laboratory quality through collaboration, comparison, and continual improvement.
   </div>
 
-  <div class="card" style="text-align:center; margin-bottom:20px;">
-    <p style="font-weight:600; color:#0d3b30; margin:0;">Strengthening laboratory quality through collaboration, comparison, and continual improvement.</p>
+  <div class="contact-card">
+    <h2>Contact Us</h2>
+    <p><a href="mailto:copperbeltinterlab@gmail.com">copperbeltinterlab@gmail.com</a></p>
   </div>
 
-  <div class="card" style="text-align:center; margin-bottom:24px;">
-    <h4 style="margin:0 0 6px; color:#0d3b30;">Contact Us</h4>
-    <p class="meta" style="margin:0;"><a href="mailto:copperbeltinterlab@gmail.com">copperbeltinterlab@gmail.com</a></p>
-  </div>
-
-  <div style="text-align:center;">
-    <button id="homeLoginCta" style="background:#d8a13a; color:#0d3b30; font-weight:700; border:none; border-radius:24px; padding:12px 32px; font-size:15px; cursor:pointer;">Log in to the Programme</button>
+  <div class="cta-wrap">
+    <button id="homeLoginCta" class="home-cta">Log in to the Programme</button>
   </div>
 </div>
 
@@ -536,26 +716,15 @@ document.getElementById('logoutBtn').addEventListener('click', async ()=>{
 function showPublicTab(tab){
   document.getElementById('homeScreen').style.display = tab==='home' ? 'block' : 'none';
   document.getElementById('loginScreen').style.display = tab==='login' ? 'block' : 'none';
-  document.getElementById('publicHomeTabBtn').className = tab==='home' ? 'primary small' : 'secondary small';
-  document.getElementById('publicLoginTabBtn').className = tab==='login' ? 'primary small' : 'secondary small';
+  document.getElementById('publicHomeTabBtn').className = 'public-nav-link' + (tab==='home' ? ' active' : '');
+  document.getElementById('publicLoginTabBtn').className = 'public-nav-link' + (tab==='login' ? ' active' : '');
 }
 document.getElementById('publicHomeTabBtn').addEventListener('click', ()=>showPublicTab('home'));
 document.getElementById('publicLoginTabBtn').addEventListener('click', ()=>showPublicTab('login'));
 
 async function loadPublicFacilities(){
-  try{
-    const labs = await api('/facilities/public');
-    const gov = labs.filter(l=>l.facilityType!=='private');
-    const priv = labs.filter(l=>l.facilityType==='private');
-    const listHtml = (arr) => arr.length
-      ? arr.map(l=>`<div>${l.name}${l.town?' · '+l.town:''}</div>`).join('')
-      : '<div>None listed yet.</div>';
-    document.getElementById('publicGovLabs').innerHTML = listHtml(gov);
-    document.getElementById('publicPrivateLabs').innerHTML = listHtml(priv);
-  }catch(e){
-    document.getElementById('publicGovLabs').innerHTML = 'Unable to load.';
-    document.getElementById('publicPrivateLabs').innerHTML = 'Unable to load.';
-  }
+  // The public landing page intentionally presents the programme categories
+  // rather than listing individual facilities.
 }
 
 async function setSession(u){
