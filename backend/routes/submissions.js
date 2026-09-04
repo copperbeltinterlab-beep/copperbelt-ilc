@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { buildConsensusReport } = require('../consensus');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
@@ -276,6 +277,72 @@ router.patch('/:roundId/deadline', requireAuth, requireRole('facilityadmin', 'su
     deadline: r.deadline instanceof Date ? r.deadline.toISOString().slice(0, 10) : String(r.deadline).slice(0, 10),
     deadlineHistory: r.deadline_history,
   });
+});
+
+// GET /api/rounds/:roundId/consensus — compute (without saving) the consensus statistics
+// and suggested per-submission verdicts for a round. Facility Admin only, providing facility only.
+router.get('/:roundId/consensus', requireAuth, requireRole('facilityadmin'), async (req, res) => {
+  const round = await getRound(req.params.roundId);
+  if (!round) return res.status(404).json({ error: 'Round not found.' });
+  if (round.providing_facility_id !== req.user.facilityId) {
+    return res.status(403).json({ error: 'This round belongs to another facility.' });
+  }
+  const { rows: subRows } = await pool.query(
+    `select * from submissions where round_id = $1 and status = 'submitted'`,
+    [req.params.roundId]
+  );
+  const submissions = subRows.map(camel);
+  const report = buildConsensusReport(round.test_id, submissions);
+  if (report.error) return res.status(400).json(report);
+
+  // Facilities expected to participate (everyone except the facility providing this round)
+  // who never submitted anything at all — distinct from a submission that came in "rejected".
+  const { rows: facilityRows } = await pool.query(
+    'select id, name from facilities where id != $1 and active = true order by name',
+    [round.providing_facility_id]
+  );
+  const submittedFacilityIds = new Set(submissions.map(s => s.facilityId));
+  const notSubmitted = facilityRows.filter(f => !submittedFacilityIds.has(f.id)).map(f => ({ facilityId: f.id, facilityName: f.name }));
+
+  res.json({ ...report, notSubmitted });
+});
+
+// POST /api/rounds/:roundId/consensus/apply — compute the consensus and write it as the
+// "Verify" step for every submitted result in this round (same effect as manually verifying
+// each one, just done in bulk). A DIFFERENT Facility Admin must still Authorize & Release
+// each one afterward — this endpoint never releases feedback by itself.
+router.post('/:roundId/consensus/apply', requireAuth, requireRole('facilityadmin'), async (req, res) => {
+  const round = await getRound(req.params.roundId);
+  if (!round) return res.status(404).json({ error: 'Round not found.' });
+  if (round.providing_facility_id !== req.user.facilityId) {
+    return res.status(403).json({ error: 'This round belongs to another facility.' });
+  }
+  const { rows: subRows } = await pool.query(
+    `select * from submissions where round_id = $1 and status = 'submitted'`,
+    [req.params.roundId]
+  );
+  const submissions = subRows.map(camel);
+  const report = buildConsensusReport(round.test_id, submissions);
+  if (report.error) return res.status(400).json(report);
+
+  const updated = [];
+  for (const entry of report.perSubmission) {
+    const feedback = {
+      status: entry.overall,
+      comment: entry.comment,
+      verifiedBy: req.user.name,
+      verifiedAt: new Date().toISOString(),
+      authorizedBy: null,
+      authorizedAt: null,
+      released: false,
+    };
+    const { rows } = await pool.query(
+      'update submissions set feedback = $1 where id = $2 returning *',
+      [feedback, entry.submissionId]
+    );
+    updated.push(camel(rows[0]));
+  }
+  res.json({ fieldStats: report.fieldStats, updatedSubmissions: updated });
 });
 
 module.exports = router;

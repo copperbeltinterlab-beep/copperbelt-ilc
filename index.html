@@ -332,6 +332,16 @@
         <label>Round</label>
         <select id="feedbackRoundSelect"></select>
       </div>
+      <div class="card" id="consensusPanel" style="display:none;">
+        <h3 class="subsection" style="margin-top:0;">Automatic consensus</h3>
+        <div class="note">Calculates group statistics from every submitted result in this round (minimum 3 participating facilities needed per test) and can pre-fill each result's Verify step. A different Facility Admin must still Authorize & Release each one.</div>
+        <div class="btn-row">
+          <button class="secondary" id="calcConsensusBtn">Calculate consensus</button>
+          <button class="primary" id="applyConsensusBtn">Apply to all as Verified</button>
+        </div>
+        <div id="consensusStats" style="margin-top:12px;"></div>
+        <div id="consensusNotSubmitted" style="margin-top:8px;"></div>
+      </div>
       <div id="feedbackSubmissionsList"></div>
     </section>
 
@@ -1106,15 +1116,55 @@ function renderAllRounds(){
 async function renderFeedbackAdmin(){
   const sel = document.getElementById('feedbackRoundSelect');
   const mine = ROUNDS.filter(r=>r.providingFacilityId===session.facilityId);
+  document.getElementById('consensusStats').innerHTML = '';
+  document.getElementById('consensusNotSubmitted').innerHTML = '';
   if(mine.length===0){
     sel.innerHTML = '<option value="">No rounds yet</option>';
+    document.getElementById('consensusPanel').style.display = 'none';
     document.getElementById('feedbackSubmissionsList').innerHTML = '<div class="empty">Create a round first.</div>';
     return;
   }
+  document.getElementById('consensusPanel').style.display = 'block';
   sel.innerHTML = mine.map(r=>`<option value="${r.id}">${testById(r.testId).name} — ${r.sampleId}</option>`).join('');
-  sel.onchange = ()=>renderFeedbackSubmissions(sel.value);
+  sel.onchange = ()=>{
+    document.getElementById('consensusStats').innerHTML = '';
+    document.getElementById('consensusNotSubmitted').innerHTML = '';
+    renderFeedbackSubmissions(sel.value);
+  };
   renderFeedbackSubmissions(sel.value);
 }
+
+function renderConsensusStats(fieldStats, notSubmitted){
+  const rows = Object.entries(fieldStats).map(([key, s])=>{
+    if(s.insufficientData) return `<div class="row-item"><div><strong>${key.toUpperCase()}</strong></div><span class="meta">Insufficient participants (n=${s.n}, need ${3})</span></div>`;
+    if('consensusValue' in s) return `<div class="row-item"><div><strong>${key.toUpperCase()}</strong></div><span class="meta">${s.tie ? 'No clear consensus (tie)' : `Consensus: ${s.consensusValue} (${s.percentAgreement}% agreement, n=${s.n})`}</span></div>`;
+    return `<div class="row-item"><div><strong>${key.toUpperCase()}</strong></div><span class="meta">Mean ${s.mean.toFixed(2)} ± ${s.sd.toFixed(2)} (n=${s.n})</span></div>`;
+  }).join('');
+  document.getElementById('consensusStats').innerHTML = rows;
+  document.getElementById('consensusNotSubmitted').innerHTML = notSubmitted && notSubmitted.length
+    ? `<div class="note">Results Not Submitted: ${notSubmitted.map(f=>f.facilityName).join(', ')}</div>` : '';
+}
+document.getElementById('calcConsensusBtn').addEventListener('click', async ()=>{
+  const roundId = document.getElementById('feedbackRoundSelect').value;
+  if(!roundId){ showToast('Select a round first.'); return; }
+  try{
+    const report = await api(`/rounds/${roundId}/consensus`);
+    renderConsensusStats(report.fieldStats, report.notSubmitted);
+    showToast('Consensus calculated.');
+  }catch(e){ showToast(e.message); }
+});
+document.getElementById('applyConsensusBtn').addEventListener('click', async ()=>{
+  const roundId = document.getElementById('feedbackRoundSelect').value;
+  if(!roundId){ showToast('Select a round first.'); return; }
+  if(!confirm('Apply the calculated consensus as the Verify step for every submitted result in this round? This overwrites any existing unauthorized feedback for this round.')) return;
+  try{
+    const { fieldStats } = await api(`/rounds/${roundId}/consensus/apply`, { method:'POST' });
+    renderConsensusStats(fieldStats, null);
+    showToast('Consensus applied. A different Facility Admin can now authorize each result.');
+    renderFeedbackSubmissions(roundId);
+  }catch(e){ showToast(e.message); }
+});
+
 async function renderFeedbackSubmissions(roundId){
   const el = document.getElementById('feedbackSubmissionsList');
   const round = ROUNDS.find(r=>r.id===Number(roundId));
