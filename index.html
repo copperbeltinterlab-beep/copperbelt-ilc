@@ -1644,8 +1644,25 @@ async function renderMyFeedback(){
         </div>
         ${fb?.comment ? `<div class="meta" style="margin:6px 0 4px;">Comment: ${fb.comment}</div>` : ''}
         <button class="secondary small print-fb" data-round="${round.id}" data-sub="${sub.id}">Print / download feedback</button>
+        <button class="secondary small query-fb" data-round="${round.id}" data-sub="${sub.id}">Send a follow-up query</button>
       </div>`;
   }).join('');
+  el.querySelectorAll('.query-fb').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const roundId = btn.dataset.round, subId = btn.dataset.sub;
+      const message = prompt('Enter your question about this result — it will be emailed to the facility that ran this round:');
+      if(!message || !message.trim()) return;
+      btn.disabled = true;
+      try{
+        const { message: confirmMsg } = await api(`/rounds/${roundId}/submissions/${subId}/query`, { method:'POST', body:{ message: message.trim() } });
+        showToast(confirmMsg || 'Query sent.');
+      }catch(e){
+        showToast(e.message);
+      }finally{
+        btn.disabled = false;
+      }
+    });
+  });
   el.querySelectorAll('.print-fb').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const roundId = btn.dataset.round, subId = btn.dataset.sub;

@@ -1,9 +1,18 @@
 const express = require('express');
 const pool = require('../db');
 const { buildConsensusReport } = require('../consensus');
+const { getTestName } = require('../testDefinitions');
+const { sendFeedbackReleasedEmail, sendFollowUpQueryEmail } = require('../email');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
+
+const MAX_QUERY_MESSAGE_LENGTH = 2000;
+
+// Human-readable "Test Name — Sample X" label used in email notifications.
+function roundLabel(round) {
+  return `${getTestName(round.test_id)} — Sample ${round.sample_id}`;
+}
 
 function camel(s) {
   return {
@@ -174,6 +183,55 @@ router.get('/mine/feedback', requireAuth, requireRole('user'), async (req, res) 
   res.json(visible);
 });
 
+// POST /api/rounds/:roundId/submissions/:subId/query — a Facility User sends a follow-up
+// question about their own submission/feedback to the Facility Admins at the facility that
+// provides this round (the ones who verify/authorize it). This is a direct email relay —
+// nothing is stored server-side, it's a message, not a ticket.
+router.post('/:roundId/submissions/:subId/query', requireAuth, requireRole('user'), async (req, res) => {
+  const message = (req.body.message || '').trim();
+  if (!message) return res.status(400).json({ error: 'Enter a message before sending.' });
+  if (message.length > MAX_QUERY_MESSAGE_LENGTH) {
+    return res.status(400).json({ error: `Message is too long (max ${MAX_QUERY_MESSAGE_LENGTH} characters).` });
+  }
+
+  const round = await getRound(req.params.roundId);
+  if (!round) return res.status(404).json({ error: 'Round not found.' });
+
+  const { rows: subRows } = await pool.query(
+    'select * from submissions where id = $1 and round_id = $2',
+    [req.params.subId, req.params.roundId]
+  );
+  const submission = subRows[0];
+  if (!submission) return res.status(404).json({ error: 'Submission not found.' });
+  if (submission.facility_id !== req.user.facilityId) {
+    return res.status(403).json({ error: 'You can only send a query about your own facility\'s submission.' });
+  }
+
+  const { rows: facRows } = await pool.query('select name from facilities where id = $1', [req.user.facilityId]);
+  const facilityName = facRows[0] ? facRows[0].name : 'Unknown facility';
+
+  const { rows: recipientRows } = await pool.query(
+    `select email from users where facility_id = $1 and role = 'facilityadmin' and status = 'active' and email is not null`,
+    [round.providing_facility_id]
+  );
+  if (recipientRows.length === 0) {
+    return res.status(400).json({ error: 'No administrator contact is currently available for this round\'s facility.' });
+  }
+
+  const { rows: providerRows } = await pool.query('select name from facilities where id = $1', [round.providing_facility_id]);
+  const providerName = providerRows[0] ? providerRows[0].name : 'the providing facility';
+
+  await Promise.all(recipientRows.map(r => sendFollowUpQueryEmail({
+    to: r.email,
+    personnelName: req.user.name,
+    facilityName,
+    messageBody: message,
+    context: roundLabel(round),
+  })));
+
+  res.json({ message: `Your query has been sent to ${providerName}.` });
+});
+
 // POST /api/rounds/:roundId/submissions/:subId/feedback — Facility Admin evaluates a result.
 // Two-person sign-off: one admin "verifies" (records a provisional assessment), then a
 // DIFFERENT admin at the same facility "authorizes" it, which releases it to the submitting
@@ -211,6 +269,21 @@ router.post('/:roundId/submissions/:subId/feedback', requireAuth, requireRole('f
       `update submissions set feedback = $1 where id = $2 and round_id = $3 returning *`,
       [feedback, req.params.subId, req.params.roundId]
     );
+
+    // Notify the submitting facility's users now that feedback is visible to them.
+    // Never let an email hiccup affect the response — sendFeedbackReleasedEmail/sendMail
+    // already swallow their own errors, but we double-guard here regardless.
+    try {
+      const { rows: recipientRows } = await pool.query(
+        `select name, email from users where facility_id = $1 and role = 'user' and status = 'active' and email is not null`,
+        [existing.facility_id]
+      );
+      const label = roundLabel(round);
+      await Promise.all(recipientRows.map(u => sendFeedbackReleasedEmail({ to: u.email, name: u.name, roundLabel: label })));
+    } catch (e) {
+      console.error('Failed to send feedback-released notification:', e.message);
+    }
+
     return res.json(camel(rows[0]));
   }
 
