@@ -15,7 +15,6 @@ function camel(s) {
     sampleAcceptability: s.sample_acceptability,
     sampleRejectionReason: s.sample_rejection_reason,
     resultStatus: s.result_status,
-    notPerformedReason: s.not_performed_reason,
     result: s.result,
     personnelTesting: s.personnel_testing,
     personnelVerifying: s.personnel_verifying,
@@ -43,8 +42,8 @@ router.get('/:roundId/submissions', requireAuth, requireRole('facilityadmin'), a
   res.json(rows.map(camel));
 });
 
-// GET /api/rounds/:roundId/submissions/mine — a Facility User's or Facility Admin's own draft/submission for a round
-router.get('/:roundId/submissions/mine', requireAuth, requireRole('user', 'facilityadmin'), async (req, res) => {
+// GET /api/rounds/:roundId/submissions/mine — a Facility User's own draft/submission for a round
+router.get('/:roundId/submissions/mine', requireAuth, requireRole('user'), async (req, res) => {
   const { rows } = await pool.query(
     'select * from submissions where round_id = $1 and facility_id = $2',
     [req.params.roundId, req.user.facilityId]
@@ -52,9 +51,9 @@ router.get('/:roundId/submissions/mine', requireAuth, requireRole('user', 'facil
   res.json(rows[0] ? camel(rows[0]) : null);
 });
 
-// PUT /api/rounds/:roundId/submissions/mine — save draft or submit final result
-// Facility Users and Facility Admins can both submit results for their own facility.
-router.put('/:roundId/submissions/mine', requireAuth, requireRole('user', 'facilityadmin'), async (req, res) => {
+// PUT /api/rounds/:roundId/submissions/mine — save draft or submit final result.
+// Facility Users only — this is laboratory result entry, not an admin function.
+router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async (req, res) => {
   const round = await getRound(req.params.roundId);
   if (!round) return res.status(404).json({ error: 'Round not found.' });
 
@@ -74,7 +73,6 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user', 'facil
   const {
     dateReceived, methodUsed, sampleCondition,
     sampleAcceptability, sampleRejectionReason,
-    resultStatus, notPerformedReason,
     result, personnelTesting, personnelVerifying, finalize,
   } = req.body;
 
@@ -97,19 +95,23 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user', 'facil
     if (sampleAcceptability === 'rejected' && !(sampleRejectionReason || '').trim()) {
       return res.status(400).json({ error: 'A reason is required when a sample is rejected.' });
     }
-    if (sampleAcceptability === 'rejected' && resultStatus !== 'not_performed') {
-      return res.status(400).json({ error: 'A rejected sample cannot have a reported result — mark the test as not performed.' });
-    }
-    if (!['reported', 'not_performed'].includes(resultStatus)) {
-      return res.status(400).json({ error: 'Indicate whether a result was reported or the test was not performed.' });
-    }
-    if (resultStatus === 'not_performed' && !(notPerformedReason || '').trim()) {
-      return res.status(400).json({ error: 'A reason is required when a test was not performed.' });
-    }
-    if (resultStatus === 'reported' && (!result || Object.keys(result).length === 0)) {
-      return res.status(400).json({ error: 'Enter a result, or mark the test as not performed.' });
+    // Note: "Test Not Performed" is now a per-analyte choice living inside `result` itself
+    // (e.g. { urea: { value: null, notPerformed: true } }), not a sample-wide status. We don't
+    // require every individual field here — the frontend guides that per-analyte choice — but
+    // an accepted sample must have at least submitted a result object.
+    if (sampleAcceptability === 'accepted' && (!result || Object.keys(result).length === 0)) {
+      return res.status(400).json({ error: 'Enter results for this sample, or mark individual tests as not performed.' });
     }
   }
+
+  // Derive an internal reported/not_performed summary (used for consensus/statistics later) —
+  // this is computed automatically, never chosen directly by the lab, and is not shown as a
+  // separate sample-wide control in the UI.
+  const hasAnyRealValue = result && Object.values(result).some(v => {
+    if (v && typeof v === 'object') return v.value !== null && v.value !== undefined && v.value !== '' && !v.notPerformed;
+    return v !== null && v !== undefined && v !== '';
+  });
+  const derivedResultStatus = (sampleAcceptability === 'rejected' || !hasAnyRealValue) ? 'not_performed' : 'reported';
 
   const status = finalize ? 'submitted' : 'draft';
   const submittedAt = finalize ? new Date().toISOString() : (existing ? existing.submitted_at : null);
@@ -117,9 +119,9 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user', 'facil
   const { rows } = await pool.query(
     `insert into submissions
        (round_id, facility_id, date_received, method_used, sample_condition,
-        sample_acceptability, sample_rejection_reason, result_status, not_performed_reason,
+        sample_acceptability, sample_rejection_reason, result_status,
         result, personnel_testing, personnel_verifying, status, saved_at, submitted_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now(), $14)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now(), $13)
      on conflict (round_id, facility_id) do update set
        date_received = excluded.date_received,
        method_used = excluded.method_used,
@@ -127,7 +129,6 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user', 'facil
        sample_acceptability = excluded.sample_acceptability,
        sample_rejection_reason = excluded.sample_rejection_reason,
        result_status = excluded.result_status,
-       not_performed_reason = excluded.not_performed_reason,
        result = excluded.result,
        personnel_testing = excluded.personnel_testing,
        personnel_verifying = excluded.personnel_verifying,
@@ -137,8 +138,7 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user', 'facil
      returning *`,
     [req.params.roundId, req.user.facilityId, dateReceived || null, methodUsed || null,
      sampleCondition || null, sampleAcceptability || null, sampleRejectionReason || null,
-     resultStatus || 'reported', notPerformedReason || null,
-     result || {}, personnelTesting || null, personnelVerifying || null,
+     derivedResultStatus, result || {}, personnelTesting || null, personnelVerifying || null,
      status, submittedAt]
   );
   res.json(camel(rows[0]));
@@ -146,7 +146,7 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user', 'facil
 
 // GET /api/rounds/mine/status — a Facility User's submission status (submitted / draft / none)
 // across every round, so Active Rounds can show "Results Submitted" / "Results Not Submitted".
-router.get('/mine/status', requireAuth, requireRole('user', 'facilityadmin'), async (req, res) => {
+router.get('/mine/status', requireAuth, requireRole('user'), async (req, res) => {
   const { rows } = await pool.query(
     'select round_id, status from submissions where facility_id = $1',
     [req.user.facilityId]
@@ -159,7 +159,7 @@ router.get('/mine/status', requireAuth, requireRole('user', 'facilityadmin'), as
 // GET /api/rounds/mine/feedback — a Facility User's own submitted results + feedback, across all rounds.
 // Only shows feedback that has been fully authorized (dual sign-off complete) — a verified-only
 // result is still under internal review and stays hidden from the submitting facility until then.
-router.get('/mine/feedback', requireAuth, requireRole('user', 'facilityadmin'), async (req, res) => {
+router.get('/mine/feedback', requireAuth, requireRole('user'), async (req, res) => {
   const { rows } = await pool.query(
     `select * from submissions where facility_id = $1 and status = 'submitted' order by submitted_at desc`,
     [req.user.facilityId]

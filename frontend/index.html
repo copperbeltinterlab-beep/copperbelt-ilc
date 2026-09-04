@@ -112,34 +112,39 @@
 </header>
 
 <!-- ================= PUBLIC HOME ================= -->
-<div class="login-wrap" id="homeScreen" style="max-width:760px;">
-  <div class="card" style="text-align:center;">
-    <img id="homeCoatOfArms" alt="Coat of Arms of Zambia" style="height:72px; width:auto; margin-bottom:10px;">
-    <div style="font-size:13px; letter-spacing:1px; color:#666;">MINISTRY OF HEALTH, ZAMBIA</div>
-    <div style="font-size:14px; color:#555; margin-top:2px;">Copperbelt Province</div>
-    <h1 style="margin:10px 0 4px; color:#0d3b30; font-size:26px;">Copperbelt Interlaboratory Comparison Programme</h1>
-    <div style="font-weight:600; color:#0d3b30; margin-bottom:18px;">Compare. Evaluate. Improve.</div>
-    <p style="text-align:left; color:#333; line-height:1.6;">A Ministry of Health, Zambia programme supporting medical laboratories across the Copperbelt to strengthen quality, reliability, and continual improvement through Interlaboratory Comparison (ILC).</p>
-    <p style="text-align:left; color:#333; line-height:1.6;">The programme provides a centralized platform for laboratories to receive samples, submit examination results, and receive professional performance feedback, supporting quality requirements of ISO 15189:2022.</p>
+<div class="login-wrap" id="homeScreen" style="max-width:800px;">
+  <div style="background:#0d3b30; color:#fff; border-radius:10px; padding:36px 28px; text-align:center; margin-bottom:20px;">
+    <div style="font-size:12px; letter-spacing:2px; color:#cfe3da;">MINISTRY OF HEALTH, ZAMBIA</div>
+    <div style="font-size:14px; color:#cfe3da; margin-top:4px;">Copperbelt Province</div>
+    <h1 style="margin:14px 0 8px; color:#fff; font-size:30px; font-weight:800;">Copperbelt Interlaboratory Comparison Programme</h1>
+    <div style="font-weight:700; color:#d8a13a; margin-bottom:20px; font-size:16px;">Compare. Evaluate. Improve.</div>
+    <p style="color:#e4efe9; line-height:1.7; max-width:640px; margin:0 auto 14px;">A Ministry of Health, Zambia programme supporting medical laboratories across the Copperbelt to strengthen quality, reliability, and continual improvement through Interlaboratory Comparison (ILC).</p>
+    <p style="color:#e4efe9; line-height:1.7; max-width:640px; margin:0 auto;">The programme provides a centralized platform for laboratories to receive samples, submit examination results, and receive professional performance feedback, supporting quality requirements of ISO 15189:2022.</p>
   </div>
 
-  <div class="card">
-    <h3 class="subsection" style="margin-top:0; text-align:center;">Participating Laboratories</h3>
-    <div class="grid2 split">
-      <div>
-        <h4 style="margin-bottom:8px;">Government/Public Laboratories</h4>
-        <div id="publicGovLabs" class="meta">Loading…</div>
-      </div>
-      <div>
-        <h4 style="margin-bottom:8px;">Private Medical Laboratories</h4>
-        <div id="publicPrivateLabs" class="meta">Loading…</div>
-      </div>
+  <h3 class="subsection" style="text-align:center; margin:0 0 12px;">Participating Laboratories</h3>
+  <div class="grid2 split" style="margin-bottom:20px;">
+    <div class="card" style="text-align:center;">
+      <h4 style="margin-bottom:8px; color:#0d3b30;">Government/Public Laboratories</h4>
+      <div id="publicGovLabs" class="meta">Loading…</div>
+    </div>
+    <div class="card" style="text-align:center;">
+      <h4 style="margin-bottom:8px; color:#0d3b30;">Private Medical Laboratories</h4>
+      <div id="publicPrivateLabs" class="meta">Loading…</div>
     </div>
   </div>
 
-  <div class="card" style="text-align:center;">
-    <p style="font-style:italic; color:#0d3b30;">Strengthening laboratory quality through collaboration, comparison, and continual improvement.</p>
-    <p class="meta">Contact us: <a href="mailto:copperbeltinterlab@gmail.com">copperbeltinterlab@gmail.com</a></p>
+  <div class="card" style="text-align:center; margin-bottom:20px;">
+    <p style="font-weight:600; color:#0d3b30; margin:0;">Strengthening laboratory quality through collaboration, comparison, and continual improvement.</p>
+  </div>
+
+  <div class="card" style="text-align:center; margin-bottom:24px;">
+    <h4 style="margin:0 0 6px; color:#0d3b30;">Contact Us</h4>
+    <p class="meta" style="margin:0;"><a href="mailto:copperbeltinterlab@gmail.com">copperbeltinterlab@gmail.com</a></p>
+  </div>
+
+  <div style="text-align:center;">
+    <button id="homeLoginCta" style="background:#d8a13a; color:#0d3b30; font-weight:700; border:none; border-radius:24px; padding:12px 32px; font-size:15px; cursor:pointer;">Log in to the Programme</button>
   </div>
 </div>
 
@@ -302,8 +307,10 @@
           <div id="newRoundSampleNames"></div>
           <label>Submission deadline</label>
           <input type="date" id="newRoundDeadline">
-          <label>Testing instructions (optional)</label>
+          <label>Testing instructions *</label>
           <textarea id="newRoundInstructions" placeholder="e.g. Handling notes, expected turnaround, reporting format"></textarea>
+          <label>Attach instructions file (optional)</label>
+          <input type="file" id="newRoundInstructionsFile">
           <button class="primary" id="addRoundBtn">Create round(s)</button>
         </div>
         <div class="card">
@@ -349,9 +356,9 @@
           <textarea id="sampleCondition" placeholder="e.g. Correct sample transportation temperature, no leakages observed"></textarea>
 
           <label>Sample acceptability *</label>
-          <div class="row2">
-            <label style="font-weight:400;"><input type="radio" name="sampleAcceptability" value="accepted" id="sampleAccepted" style="width:auto; margin-right:6px;">Accepted</label>
-            <label style="font-weight:400;"><input type="radio" name="sampleAcceptability" value="rejected" id="sampleRejected" style="width:auto; margin-right:6px;">Rejected</label>
+          <div style="display:flex; gap:24px; align-items:center; margin-bottom:12px;">
+            <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="sampleAcceptability" value="accepted" id="sampleAccepted" style="width:auto; margin:0;"><span>Accepted</span></label>
+            <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="sampleAcceptability" value="rejected" id="sampleRejected" style="width:auto; margin:0;"><span>Rejected</span></label>
           </div>
           <div id="rejectionReasonWrap" style="display:none;">
             <label>Reason for rejection *</label>
@@ -359,15 +366,6 @@
           </div>
 
           <h3 class="fieldset-title">Result</h3>
-          <label>Result status *</label>
-          <div class="row2">
-            <label style="font-weight:400;"><input type="radio" name="resultStatus" value="reported" id="resultReported" style="width:auto; margin-right:6px;">Result reported</label>
-            <label style="font-weight:400;"><input type="radio" name="resultStatus" value="not_performed" id="resultNotPerformed" style="width:auto; margin-right:6px;">Test not performed</label>
-          </div>
-          <div id="notPerformedReasonWrap" style="display:none;">
-            <label>Reason test was not performed *</label>
-            <textarea id="notPerformedReason" placeholder="e.g. Sample rejected on receipt, reagent stock-out, equipment failure"></textarea>
-          </div>
           <div id="dynamicResultFieldsWrap">
             <div id="dynamicResultFields"></div>
           </div>
@@ -571,7 +569,7 @@ async function tryRestoreSession(){
 /* ---------------- Nav / role-based tabs ---------------- */
 const NAV_BY_ROLE = {
   superadmin: [ ['facilities','Facilities'], ['access','Users & Access'], ['allrounds','All ILC Rounds'] ],
-  facilityadmin: [ ['facusers','My Facility Users'], ['provide','Tests We Provide'], ['feedback-admin','Give Feedback'], ['rounds','Active Rounds'], ['submit','Submit Result'], ['myfeedback','My Feedback'] ],
+  facilityadmin: [ ['facusers','My Facility Users'], ['provide','Tests We Provide'], ['feedback-admin','Give Feedback'] ],
   user: [ ['rounds','Active Rounds'], ['submit','Submit Result'], ['myfeedback','My Feedback'] ],
 };
 
@@ -605,7 +603,7 @@ async function loadAllData(){
   if(session.role === 'superadmin'){
     FACILITY_ADMIN_COUNTS = await api('/users/facility-admin-counts');
   }
-  if(session.role === 'user' || session.role === 'facilityadmin'){
+  if(session.role === 'user'){
     MY_SUBMISSION_STATUS = await api('/rounds/mine/status');
   }
   renderCurrentTab();
@@ -921,6 +919,21 @@ document.getElementById('addFacUserBtn').addEventListener('click', async ()=>{
 });
 
 /* ---------------- FACILITY ADMIN: Tests We Provide ---------------- */
+async function downloadInstructionsFile(roundId, fileName){
+  try{
+    const res = await fetch(API_BASE + `/rounds/${roundId}/instructions-file`, {
+      headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+    });
+    if(!res.ok){ showToast('Could not download file.'); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName || 'instructions';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }catch(e){ showToast('Could not download file.'); }
+}
+
 function renderProvide(){
   const testSel = document.getElementById('newRoundTest');
   testSel.innerHTML = TESTS.map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
@@ -935,6 +948,7 @@ function renderProvide(){
       <div>
         <strong>${testById(r.testId).name}</strong>
         <div class="meta">SAMPLE ${r.sampleId} · Deadline: ${r.deadline}</div>
+        ${r.instructionsFileName ? `<div class="meta"><a href="#" class="download-instructions" data-id="${r.id}" data-filename="${r.instructionsFileName}">📎 ${r.instructionsFileName}</a></div>` : ''}
         ${history.length ? `<div class="meta" style="margin-top:4px;">
           <a href="#" class="view-deadline-history" data-id="${r.id}">${history.length} deadline change${history.length===1?'':'s'} — view history</a>
         </div>` : ''}
@@ -945,6 +959,9 @@ function renderProvide(){
       </div>
     </div>`;
   }).join('');
+  el.querySelectorAll('.download-instructions').forEach(link=>{
+    link.addEventListener('click', (e)=>{ e.preventDefault(); downloadInstructionsFile(link.dataset.id, link.dataset.filename); });
+  });
 
   el.querySelectorAll('.edit-deadline').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
@@ -987,14 +1004,31 @@ document.getElementById('addRoundBtn').addEventListener('click', async ()=>{
   const testId = document.getElementById('newRoundTest').value;
   const deadline = document.getElementById('newRoundDeadline').value;
   const instructions = document.getElementById('newRoundInstructions').value.trim();
+  const fileInput = document.getElementById('newRoundInstructionsFile');
   const sampleIds = Array.from(document.querySelectorAll('.new-round-sample-name')).map(i=>i.value.trim());
   if(!deadline){ showToast('Enter a submission deadline.'); return; }
+  if(!instructions){ showToast('Testing instructions are required.'); return; }
   if(sampleIds.some(s=>!s)){ showToast('Name every sample slot.'); return; }
+
+  const formData = new FormData();
+  formData.append('testId', testId);
+  formData.append('deadline', deadline);
+  formData.append('instructions', instructions);
+  formData.append('sampleIds', JSON.stringify(sampleIds));
+  if(fileInput.files[0]) formData.append('instructionsFile', fileInput.files[0]);
+
   try{
-    const created = await api('/rounds/batch', { method:'POST', body:{ testId, sampleIds, deadline, instructions } });
+    const res = await fetch(API_BASE + '/rounds/batch', {
+      method: 'POST',
+      headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+      body: formData,
+    });
+    const created = await res.json();
+    if(!res.ok) throw new Error(created.error || 'Failed to create round(s).');
     ROUNDS.push(...created);
     document.getElementById('newRoundDeadline').value = '';
     document.getElementById('newRoundInstructions').value = '';
+    fileInput.value = '';
     document.querySelectorAll('.new-round-sample-name').forEach(i=>i.value='');
     showToast(`${created.length} round(s) created.`);
     renderProvide();
@@ -1012,6 +1046,7 @@ function renderAllRounds(){
         <strong>${testById(r.testId).name}</strong>
         <div class="meta">SAMPLE ${r.sampleId} · provided by ${facilityName(r.providingFacilityId)} · Deadline: ${r.deadline}</div>
         ${r.instructions ? `<div class="meta">Instructions: ${r.instructions}</div>` : ''}
+        ${r.instructionsFileName ? `<div class="meta"><a href="#" class="download-instructions-admin" data-id="${r.id}" data-filename="${r.instructionsFileName}">📎 ${r.instructionsFileName}</a></div>` : ''}
         ${(r.deadlineHistory||[]).length ? `<a href="#" class="view-deadline-history-admin" data-id="${r.id}">${r.deadlineHistory.length} deadline change(s) — view history</a>` : ''}
       </div>
       <div style="display:flex; gap:8px; align-items:center;">
@@ -1021,6 +1056,9 @@ function renderAllRounds(){
       </div>
     </div>`;
   }).join('');
+  el.querySelectorAll('.download-instructions-admin').forEach(link=>{
+    link.addEventListener('click', (e)=>{ e.preventDefault(); downloadInstructionsFile(link.dataset.id, link.dataset.filename); });
+  });
 
   el.querySelectorAll('.edit-deadline-admin').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
@@ -1089,8 +1127,8 @@ async function renderFeedbackSubmissions(roundId){
       : s.sampleAcceptability === 'accepted'
       ? `<span class="badge" style="background:#e3f3ea;color:#0d3b30;">Sample Accepted</span>`
       : '';
-    const resultLine = s.resultStatus === 'not_performed'
-      ? `<div class="meta" style="margin-bottom:4px; color:#8a1f1f;">Test not performed — ${s.notPerformedReason || 'no reason given'}</div>`
+    const resultLine = s.sampleAcceptability === 'rejected'
+      ? `<div class="meta" style="margin-bottom:4px; color:#8a1f1f;">Sample rejected — no results expected.</div>`
       : `<div class="meta" style="margin-bottom:8px;">${formatResultSummary(round.testId, s.result)}</div>`;
     return `
     <div class="card">
@@ -1138,12 +1176,33 @@ async function renderFeedbackSubmissions(roundId){
     });
   });
 }
+// Reads a field's stored value tolerantly — supports both the new { value, notPerformed }
+// shape and older flat values from submissions saved before this per-analyte redesign.
+function fieldState(existing, key){
+  const v = existing ? existing[key] : undefined;
+  if(v && typeof v === 'object' && ('value' in v || 'notPerformed' in v)){
+    return { value: v.value ?? '', notPerformed: !!v.notPerformed };
+  }
+  return { value: v ?? '', notPerformed: false };
+}
+function notPerformedRow(key, controlHtml, notPerformed){
+  return `<div class="field-row" style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+    <div style="flex:1;">${controlHtml}</div>
+    <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; margin:0;">
+      <input type="checkbox" class="not-performed-cb" data-field="${key}" ${notPerformed?'checked':''} style="width:auto; margin:0;"><span>Test Not Performed</span>
+    </label>
+  </div>`;
+}
 function formatResultSummary(testId, result){
   const t = testById(testId);
-  if(t.kind==='bloodgroup') return `ABO: ${result.abo||'—'} · Rh: ${result.rhesus||'—'} · Saline XM: ${result.saline||'—'} · AHG XM: ${result.ahg||'—'}`;
-  if(t.kind==='serology') return `Result: ${result.value||'—'}`;
-  if(t.kind==='fbc') return FBC_ANALYTES.map(a=>`${a.label} ${result[a.key]??'—'} ${a.unit}`).join(' · ');
-  if(t.kind==='chem') return CHEM_ANALYTES.map(a=>`${a.label} ${result[a.key]??'—'} ${a.unit}`).join(' · ');
+  const line = (key, label, unit) => {
+    const fs = fieldState(result, key);
+    return `${label}: ${fs.notPerformed ? 'Test Not Performed' : (fs.value || '—') + (unit && fs.value ? ' '+unit : '')}`;
+  };
+  if(t.kind==='bloodgroup') return [line('abo','ABO'), line('rhesus','Rh'), line('saline','Saline XM'), line('ahg','AHG XM')].join(' · ');
+  if(t.kind==='serology') return line('value','Result');
+  if(t.kind==='fbc') return FBC_ANALYTES.map(a=>line(a.key, a.label, a.unit)).join(' · ');
+  if(t.kind==='chem') return CHEM_ANALYTES.map(a=>line(a.key, a.label, a.unit)).join(' · ');
   return '';
 }
 
@@ -1183,37 +1242,59 @@ function dynamicFieldsHtml(testId, existing){
   const t = testById(testId);
   existing = existing || {};
   if(t.kind==='bloodgroup'){
-    return `
-      <label>ABO group</label>
-      <select id="rf_abo"><option value="">Select</option>${['A','B','AB','O'].map(v=>`<option ${existing.abo===v?'selected':''}>${v}</option>`).join('')}</select>
-      <label>Rhesus</label>
-      <select id="rf_rhesus"><option value="">Select</option>${['Positive','Negative'].map(v=>`<option ${existing.rhesus===v?'selected':''}>${v}</option>`).join('')}</select>
-      <label>Cross match — Saline</label>
-      <select id="rf_saline"><option value="">Select</option>${['Compatible','Incompatible'].map(v=>`<option ${existing.saline===v?'selected':''}>${v}</option>`).join('')}</select>
-      <label>Cross match — AHG</label>
-      <select id="rf_ahg"><option value="">Select</option>${['Compatible','Incompatible'].map(v=>`<option ${existing.ahg===v?'selected':''}>${v}</option>`).join('')}</select>
-    `;
+    const fields = [
+      ['abo','ABO group',['A','B','AB','O']],
+      ['rhesus','Rhesus',['Positive','Negative']],
+      ['saline','Cross match — Saline',['Compatible','Incompatible']],
+      ['ahg','Cross match — AHG',['Compatible','Incompatible']],
+    ];
+    return fields.map(([key,label,options])=>{
+      const fs = fieldState(existing, key);
+      const control = `<label>${label}</label><select id="rf_${key}" ${fs.notPerformed?'disabled':''}><option value="">Select</option>${options.map(v=>`<option ${fs.value===v?'selected':''}>${v}</option>`).join('')}</select>`;
+      return notPerformedRow(key, control, fs.notPerformed);
+    }).join('');
   }
   if(t.kind==='serology'){
-    return `<label>Result</label><select id="rf_value"><option value="">Select</option>${SEROLOGY_OPTIONS.map(v=>`<option ${existing.value===v?'selected':''}>${v}</option>`).join('')}</select>`;
+    const fs = fieldState(existing, 'value');
+    const control = `<label>Result</label><select id="rf_value" ${fs.notPerformed?'disabled':''}><option value="">Select</option>${SEROLOGY_OPTIONS.map(v=>`<option ${fs.value===v?'selected':''}>${v}</option>`).join('')}</select>`;
+    return notPerformedRow('value', control, fs.notPerformed);
   }
   if(t.kind==='fbc' || t.kind==='chem'){
     const analytes = t.kind==='fbc' ? FBC_ANALYTES : CHEM_ANALYTES;
-    return analytes.map(a=>`<label>${a.label} (${a.unit})</label><input type="number" step="any" class="mono" id="rf_${a.key}" value="${existing[a.key]??''}">`).join('');
+    return analytes.map(a=>{
+      const fs = fieldState(existing, a.key);
+      const control = `<label>${a.label} (${a.unit})</label><input type="number" step="any" class="mono" id="rf_${a.key}" value="${fs.value}" ${fs.notPerformed?'disabled':''}>`;
+      return notPerformedRow(a.key, control, fs.notPerformed);
+    }).join('');
   }
   return '';
 }
 function collectResult(testId){
   const t = testById(testId);
+  const fieldObj = (key) => {
+    const cb = document.querySelector(`.not-performed-cb[data-field="${key}"]`);
+    const notPerformed = cb ? cb.checked : false;
+    const raw = val('rf_'+key);
+    return { value: notPerformed ? null : (raw===''?null:raw), notPerformed };
+  };
   if(t.kind==='bloodgroup'){
-    return { abo: val('rf_abo'), rhesus: val('rf_rhesus'), saline: val('rf_saline'), ahg: val('rf_ahg') };
+    return { abo: fieldObj('abo'), rhesus: fieldObj('rhesus'), saline: fieldObj('saline'), ahg: fieldObj('ahg') };
   }
-  if(t.kind==='serology'){ return { value: val('rf_value') }; }
-  if(t.kind==='fbc'){ const o={}; FBC_ANALYTES.forEach(a=>o[a.key]=val('rf_'+a.key)); return o; }
-  if(t.kind==='chem'){ const o={}; CHEM_ANALYTES.forEach(a=>o[a.key]=val('rf_'+a.key)); return o; }
+  if(t.kind==='serology'){ return { value: fieldObj('value') }; }
+  if(t.kind==='fbc'){ const o={}; FBC_ANALYTES.forEach(a=>o[a.key]=fieldObj(a.key)); return o; }
+  if(t.kind==='chem'){ const o={}; CHEM_ANALYTES.forEach(a=>o[a.key]=fieldObj(a.key)); return o; }
   return {};
 }
 function val(id){ const el = document.getElementById(id); return el ? el.value : ''; }
+function wireNotPerformedCheckboxes(){
+  document.querySelectorAll('.not-performed-cb').forEach(cb=>{
+    const control = document.getElementById('rf_'+cb.dataset.field);
+    if(control) control.disabled = cb.checked;
+    cb.addEventListener('change', ()=>{
+      if(control){ control.disabled = cb.checked; if(cb.checked) control.value=''; }
+    });
+  });
+}
 
 async function renderSubmit(){
   const notice = document.getElementById('noRoundNotice');
@@ -1227,7 +1308,13 @@ async function renderSubmit(){
     <strong>${testById(round.testId).name}</strong>
     <div class="meta" style="margin-top:4px;">SAMPLE ${round.sampleId} · provided by ${facilityName(round.providingFacilityId)}</div>
     <div class="countdown ${c.cls}" style="margin-top:6px;">${c.status==='closed' ? 'This round is closed.' : c.text}</div>
-    ${round.instructions ? `<div class="note" style="margin-top:10px;"><strong>Testing instructions:</strong><br>${round.instructions}</div>` : ''}`;
+    ${round.instructions ? `<div class="note" style="margin-top:10px;"><strong>Testing instructions:</strong><br>${round.instructions}</div>` : ''}
+    ${round.instructionsFileName ? `<div class="meta" style="margin-top:6px;"><a href="#" id="submitDownloadInstructions">📎 ${round.instructionsFileName}</a></div>` : ''}`;
+  if(round.instructionsFileName){
+    document.getElementById('submitDownloadInstructions').addEventListener('click', (e)=>{
+      e.preventDefault(); downloadInstructionsFile(round.id, round.instructionsFileName);
+    });
+  }
 
   const mine = await api(`/rounds/${round.id}/submissions/mine`);
 
@@ -1235,20 +1322,14 @@ async function renderSubmit(){
   document.getElementById('methodUsed').value = mine?.methodUsed || '';
   document.getElementById('sampleCondition').value = mine?.sampleCondition || '';
   document.getElementById('dynamicResultFields').innerHTML = dynamicFieldsHtml(round.testId, mine?.result);
+  wireNotPerformedCheckboxes();
   document.getElementById('personnelTesting').value = mine?.personnelTesting || '';
   document.getElementById('personnelVerifying').value = mine?.personnelVerifying || '';
 
   document.getElementById('sampleAccepted').checked = mine?.sampleAcceptability === 'accepted';
   document.getElementById('sampleRejected').checked = mine?.sampleAcceptability === 'rejected';
   document.getElementById('sampleRejectionReason').value = mine?.sampleRejectionReason || '';
-
-  const resultStatus = mine?.resultStatus || 'reported';
-  document.getElementById('resultReported').checked = resultStatus === 'reported';
-  document.getElementById('resultNotPerformed').checked = resultStatus === 'not_performed';
-  document.getElementById('notPerformedReason').value = mine?.notPerformedReason || '';
-  applySampleAcceptabilityLock();
-  document.getElementById('notPerformedReasonWrap').style.display = resultStatus === 'not_performed' ? 'block' : 'none';
-  document.getElementById('dynamicResultFieldsWrap').style.display = resultStatus === 'not_performed' ? 'none' : 'block';
+  document.getElementById('rejectionReasonWrap').style.display = mine?.sampleAcceptability === 'rejected' ? 'block' : 'none';
 
   const closed = c.status === 'closed';
   const locked = mine?.status === 'submitted';
@@ -1257,29 +1338,12 @@ async function renderSubmit(){
   document.getElementById('submitFinalBtn').textContent = locked ? 'Already submitted' : 'Submit final result';
 }
 
+// Sample Acceptability is a sample-level decision only. It no longer forces or hides the
+// per-analyte result fields — "Test Not Performed" is chosen independently for each analyte.
 document.querySelectorAll('input[name="sampleAcceptability"]').forEach(r=>{
-  r.addEventListener('change', applySampleAcceptabilityLock);
-});
-function applySampleAcceptabilityLock(){
-  const rejected = document.getElementById('sampleRejected').checked;
-  document.getElementById('rejectionReasonWrap').style.display = rejected ? 'block' : 'none';
-  document.getElementById('resultReported').disabled = rejected;
-  if(rejected){
-    document.getElementById('resultNotPerformed').checked = true;
-    document.getElementById('notPerformedReasonWrap').style.display = 'block';
-    document.getElementById('dynamicResultFieldsWrap').style.display = 'none';
-    const npr = document.getElementById('notPerformedReason');
-    if(!npr.value.trim()) npr.value = 'Sample rejected on receipt.';
-  }else{
-    // Re-enabling doesn't force a choice back — the analyst picks reported/not performed again.
-    document.querySelectorAll('input[name="resultStatus"]').forEach(el=>el.dispatchEvent(new Event('change')));
-  }
-}
-document.querySelectorAll('input[name="resultStatus"]').forEach(r=>{
   r.addEventListener('change', ()=>{
-    const notPerformed = document.getElementById('resultNotPerformed').checked;
-    document.getElementById('notPerformedReasonWrap').style.display = notPerformed ? 'block' : 'none';
-    document.getElementById('dynamicResultFieldsWrap').style.display = notPerformed ? 'none' : 'block';
+    const rejected = document.getElementById('sampleRejected').checked;
+    document.getElementById('rejectionReasonWrap').style.display = rejected ? 'block' : 'none';
   });
 });
 
@@ -1292,8 +1356,6 @@ async function saveEntry(finalize){
   const sampleAcceptability = document.getElementById('sampleAccepted').checked ? 'accepted'
     : document.getElementById('sampleRejected').checked ? 'rejected' : null;
   const sampleRejectionReason = val('sampleRejectionReason');
-  const resultStatus = document.getElementById('resultNotPerformed').checked ? 'not_performed' : 'reported';
-  const notPerformedReason = val('notPerformedReason');
 
   if(finalize){
     if(!personnelTesting || !personnelVerifying){
@@ -1320,10 +1382,6 @@ async function saveEntry(finalize){
       showToast('Enter a reason for rejecting the sample.');
       return;
     }
-    if(resultStatus === 'not_performed' && !notPerformedReason.trim()){
-      showToast('Enter a reason the test was not performed.');
-      return;
-    }
   }
 
   const body = {
@@ -1332,9 +1390,7 @@ async function saveEntry(finalize){
     sampleCondition: val('sampleCondition'),
     sampleAcceptability,
     sampleRejectionReason,
-    resultStatus,
-    notPerformedReason,
-    result: resultStatus === 'not_performed' ? {} : collectResult(round.testId),
+    result: sampleAcceptability === 'rejected' ? {} : collectResult(round.testId),
     personnelTesting, personnelVerifying,
     finalize,
   };
@@ -1490,9 +1546,10 @@ document.getElementById('changePwBtn').addEventListener('click', async ()=>{
   }catch(e){ showToast(e.message); }
 });
 
+document.getElementById('homeLoginCta').addEventListener('click', ()=>showPublicTab('login'));
+
 /* ---------------- Init ---------------- */
 (async function init(){
-  document.getElementById('homeCoatOfArms').src = document.getElementById('headerCoatOfArms').src;
   loadPublicFacilities();
   const handledUrlAction = await checkUrlAuthActions();
   if(handledUrlAction) return;

@@ -1,58 +1,10 @@
 const express = require('express');
+const multer = require('multer');
 const pool = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
-
-// GET /api/rounds — everyone signed in can see all rounds (users need to see active rounds
-// across the province; admins need to see what their facility provides)
-router.get('/', requireAuth, async (req, res) => {
-  const { rows } = await pool.query('select * from rounds order by deadline');
-  res.json(rows.map(camel));
-});
-
-// POST /api/rounds — Facility Admin creates a single-sample round provided by THEIR facility.
-// Kept for backward compatibility; new UI uses POST /api/rounds/batch for multi-sample creation.
-router.post('/', requireAuth, requireRole('facilityadmin'), async (req, res) => {
-  const { testId, sampleId, deadline, instructions } = req.body;
-  if (!testId || !sampleId || !deadline) {
-    return res.status(400).json({ error: 'Test, sample ID and deadline are required.' });
-  }
-  const { rows } = await pool.query(
-    `insert into rounds (test_id, sample_id, providing_facility_id, deadline, instructions)
-     values ($1, $2, $3, $4, $5) returning *`,
-    [testId, sampleId, req.user.facilityId, deadline, instructions || null]
-  );
-  res.json(camel(rows[0]));
-});
-
-// POST /api/rounds/batch — Facility Admin creates several samples for the same test in one go
-// (e.g. Sample A, Sample B, Sample C), sharing the same deadline and instructions.
-router.post('/batch', requireAuth, requireRole('facilityadmin'), async (req, res) => {
-  const { testId, sampleIds, deadline, instructions } = req.body;
-  if (!testId || !deadline) {
-    return res.status(400).json({ error: 'Test and deadline are required.' });
-  }
-  if (!Array.isArray(sampleIds) || sampleIds.length < 2 || sampleIds.length > 5) {
-    return res.status(400).json({ error: 'Provide between 2 and 5 sample names.' });
-  }
-  if (sampleIds.some(s => !s || !String(s).trim())) {
-    return res.status(400).json({ error: 'Every sample must have a name.' });
-  }
-  const batchId = `${testId}-${Date.now()}`;
-  const created = [];
-  for (const sampleId of sampleIds) {
-    const { rows } = await pool.query(
-      `insert into rounds (test_id, sample_id, providing_facility_id, deadline, instructions, batch_id)
-       values ($1, $2, $3, $4, $5, $6) returning *`,
-      [testId, String(sampleId).trim(), req.user.facilityId, deadline, instructions || null, batchId]
-    );
-    created.push(camel(rows[0]));
-  }
-  res.json(created);
-});
-
-// GET /api/facilities/public is handled in facilities.js — nothing needed here.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB cap
 
 function toDateOnly(d) {
   if (!d) return null;
@@ -70,7 +22,69 @@ function camel(r) {
     deadlineHistory: r.deadline_history || [],
     instructions: r.instructions || '',
     batchId: r.batch_id || null,
+    instructionsFileName: r.instructions_file_name || null,
   };
 }
+
+// GET /api/rounds — everyone signed in can see all rounds
+router.get('/', requireAuth, async (req, res) => {
+  const { rows } = await pool.query('select * from rounds order by deadline');
+  res.json(rows.map(camel));
+});
+
+// GET /api/rounds/:roundId/instructions-file — download the attached instructions file
+router.get('/:roundId/instructions-file', requireAuth, async (req, res) => {
+  const { rows } = await pool.query('select * from rounds where id = $1', [req.params.roundId]);
+  const round = rows[0];
+  if (!round || !round.instructions_file_data) return res.status(404).json({ error: 'No file attached to this round.' });
+  const buffer = Buffer.from(round.instructions_file_data, 'base64');
+  res.setHeader('Content-Type', round.instructions_file_type || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${round.instructions_file_name || 'instructions'}"`);
+  res.send(buffer);
+});
+
+// POST /api/rounds/batch — Facility Admin creates several samples for the same test in one go,
+// sharing the same deadline, mandatory instructions, and an optional instructions file.
+// multipart/form-data: testId, deadline, instructions, sampleIds (JSON string array), instructionsFile (optional)
+router.post('/batch', requireAuth, requireRole('facilityadmin'), upload.single('instructionsFile'), async (req, res) => {
+  const { testId, deadline, instructions } = req.body;
+  let sampleIds;
+  try {
+    sampleIds = JSON.parse(req.body.sampleIds);
+  } catch (e) {
+    return res.status(400).json({ error: 'Invalid sample list.' });
+  }
+  if (!testId || !deadline) {
+    return res.status(400).json({ error: 'Test and deadline are required.' });
+  }
+  if (!instructions || !instructions.trim()) {
+    return res.status(400).json({ error: 'Testing instructions are required.' });
+  }
+  if (!Array.isArray(sampleIds) || sampleIds.length < 2 || sampleIds.length > 5) {
+    return res.status(400).json({ error: 'Provide between 2 and 5 sample names.' });
+  }
+  if (sampleIds.some(s => !s || !String(s).trim())) {
+    return res.status(400).json({ error: 'Every sample must have a name.' });
+  }
+
+  const fileName = req.file ? req.file.originalname : null;
+  const fileType = req.file ? req.file.mimetype : null;
+  const fileData = req.file ? req.file.buffer.toString('base64') : null;
+
+  const batchId = `${testId}-${Date.now()}`;
+  const created = [];
+  for (const sampleId of sampleIds) {
+    const { rows } = await pool.query(
+      `insert into rounds
+         (test_id, sample_id, providing_facility_id, deadline, instructions, batch_id,
+          instructions_file_name, instructions_file_type, instructions_file_data)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning *`,
+      [testId, String(sampleId).trim(), req.user.facilityId, deadline, instructions.trim(), batchId,
+       fileName, fileType, fileData]
+    );
+    created.push(camel(rows[0]));
+  }
+  res.json(created);
+});
 
 module.exports = router;
