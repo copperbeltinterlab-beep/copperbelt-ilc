@@ -3,6 +3,7 @@ const pool = require('../db');
 const { buildConsensusReport } = require('../consensus');
 const { getTestName } = require('../testDefinitions');
 const { sendFeedbackReleasedEmail, sendFollowUpQueryEmail } = require('../email');
+const { isEligibleParticipant } = require('../participation');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
@@ -66,6 +67,9 @@ router.get('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
 router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async (req, res) => {
   const round = await getRound(req.params.roundId);
   if (!round) return res.status(404).json({ error: 'Round not found.' });
+  if (!isEligibleParticipant(round, req.user.facilityId)) {
+    return res.status(403).json({ error: 'Your facility is not a participant in this round.' });
+  }
 
   const deadlineDateOnly = round.deadline instanceof Date ? round.deadline.toISOString().slice(0, 10) : String(round.deadline).slice(0, 10);
   const deadlinePassed = new Date(deadlineDateOnly + 'T23:59:59') < new Date();

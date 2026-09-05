@@ -28,6 +28,11 @@ function publicUser(user) {
     facilityId: user.facility_id,
     status: user.status,
     active: user.status === 'active', // kept for older frontend code that reads `active`
+    createdBy: user.created_by || null,
+    activationMethod: user.activation_method || null,
+    enabledBy: user.enabled_by || null,
+    enabledAt: user.enabled_at || null,
+    setupCompletedAt: user.setup_completed_at || null,
   };
 }
 
@@ -64,8 +69,8 @@ router.post('/bootstrap', async (req, res) => {
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
   const { username, password } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required.' });
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required.' });
   }
   const { rows } = await pool.query('select * from users where username = $1', [username]);
   const user = rows[0];
@@ -76,6 +81,13 @@ router.post('/login', async (req, res) => {
     if (facRows[0] && facRows[0].active === false) {
       return res.status(403).json({ error: 'Your facility has been disabled by the Super Admin. Contact them for assistance.' });
     }
+  }
+
+  // Super Admin activation bypass: the account is enabled but has no password yet.
+  // The username alone is enough to route into first-time password setup — no email
+  // link needed, matching the normal login page entry point the user is told to use.
+  if (user.status === 'bypass_pending') {
+    return res.json({ requiresSetup: true, setupToken: user.activation_token, name: user.name, username: user.username });
   }
 
   if (user.status === 'pending_activation') {
@@ -89,6 +101,9 @@ router.post('/login', async (req, res) => {
   }
   if (!user.password_hash) {
     return res.status(403).json({ error: 'This account has not completed activation yet.' });
+  }
+  if (!password) {
+    return res.status(400).json({ error: 'Password is required.' });
   }
 
   const ok = await bcrypt.compare(password, user.password_hash);
@@ -136,17 +151,20 @@ router.post('/activate', async (req, res) => {
   const { rows } = await pool.query('select * from users where activation_token = $1', [token]);
   const user = rows[0];
   if (!user) return res.status(404).json({ error: 'This activation link is invalid.' });
-  if (user.status !== 'pending_activation') {
+  if (!['pending_activation', 'bypass_pending'].includes(user.status)) {
     return res.status(400).json({ error: 'This account has already been activated.' });
   }
-  if (new Date(user.activation_expires) < new Date()) {
+  // Bypass tokens have no expiry — they were issued by a Super Admin action, not a
+  // time-boxed emailed link, so the account waits indefinitely for the user's first login.
+  if (user.status === 'pending_activation' && new Date(user.activation_expires) < new Date()) {
     await pool.query(`update users set status = 'activation_expired' where id = $1`, [user.id]);
     return res.status(400).json({ error: 'This activation link has expired. Ask your administrator to resend it.' });
   }
 
   const hash = await bcrypt.hash(password, 10);
   const { rows: updated } = await pool.query(
-    `update users set password_hash = $1, status = 'active', activation_token = null, activation_expires = null
+    `update users set password_hash = $1, status = 'active', activation_token = null, activation_expires = null,
+            setup_completed_at = now()
      where id = $2 returning *`,
     [hash, user.id]
   );

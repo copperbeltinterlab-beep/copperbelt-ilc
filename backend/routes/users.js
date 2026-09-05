@@ -14,6 +14,11 @@ function publicUser(u) {
     id: u.id, name: u.name, username: u.username, email: u.email,
     role: u.role, facilityId: u.facility_id, status: u.status,
     active: u.status === 'active',
+    createdBy: u.created_by || null,
+    activationMethod: u.activation_method || null,
+    enabledBy: u.enabled_by || null,
+    enabledAt: u.enabled_at || null,
+    setupCompletedAt: u.setup_completed_at || null,
   };
 }
 function randomToken() {
@@ -50,7 +55,7 @@ router.get('/', requireAuth, requireRole('superadmin', 'facilityadmin'), async (
 // Creates the account as 'pending_activation' and emails an activation link —
 // the admin never sets or knows the user's password.
 router.post('/', requireAuth, requireRole('superadmin', 'facilityadmin'), async (req, res) => {
-  let { name, username, email, role, facilityId } = req.body;
+  let { name, username, email, role, facilityId, activationMethod } = req.body;
   if (!name || !username || !email) {
     return res.status(400).json({ error: 'Name, username and email are required.' });
   }
@@ -73,6 +78,10 @@ router.post('/', requireAuth, requireRole('superadmin', 'facilityadmin'), async 
     }
   }
 
+  // The bypass is a Super Admin-only administrative exception. A Facility Admin's request
+  // body is never trusted for this — it's silently forced to the normal email flow.
+  const useBypass = req.user.role === 'superadmin' && activationMethod === 'bypass';
+
   const { rows: dupe } = await pool.query(
     'select id from users where username = $1 or email = $2', [username, email]
   );
@@ -80,14 +89,46 @@ router.post('/', requireAuth, requireRole('superadmin', 'facilityadmin'), async 
 
   const token = randomToken();
   const expires = new Date(Date.now() + ACTIVATION_WINDOW_MS);
+  const status = useBypass ? 'bypass_pending' : 'pending_activation';
+
   const { rows } = await pool.query(
-    `insert into users (name, username, email, password_hash, role, facility_id, status, activation_token, activation_expires)
-     values ($1, $2, $3, null, $4, $5, 'pending_activation', $6, $7) returning *`,
-    [name, username, email, role, facilityId || null, token, expires]
+    `insert into users
+       (name, username, email, password_hash, role, facility_id, status, activation_token, activation_expires,
+        created_by, activation_method, enabled_by, enabled_at)
+     values ($1, $2, $3, null, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning *`,
+    [name, username, email, role, facilityId || null, status, token, expires,
+     req.user.id, useBypass ? 'bypass' : 'email',
+     useBypass ? req.user.id : null, useBypass ? new Date() : null]
   );
   const user = rows[0];
-  await sendActivationEmail({ to: email, name, token });
-  res.json(publicUser(user));
+  if (useBypass) {
+    res.json(publicUser(user));
+  } else {
+    await sendActivationEmail({ to: email, name, token });
+    res.json(publicUser(user));
+  }
+});
+
+// POST /api/users/:id/enable-bypass — Super Admin only. For a user still pending the normal
+// email-activation flow (typically created by a Facility Admin), this switches them to the
+// bypass path: no email is sent, and the user instead completes first-time password setup
+// the next time they enter their username on the normal login page.
+router.post('/:id/enable-bypass', requireAuth, requireRole('superadmin'), async (req, res) => {
+  const { rows: existingRows } = await pool.query('select * from users where id = $1', [req.params.id]);
+  const target = existingRows[0];
+  if (!target) return res.status(404).json({ error: 'User not found.' });
+  if (!['pending_activation', 'activation_expired'].includes(target.status)) {
+    return res.status(400).json({ error: 'This account is not awaiting activation.' });
+  }
+
+  const token = randomToken();
+  const { rows } = await pool.query(
+    `update users set status = 'bypass_pending', activation_token = $1, activation_expires = null,
+            activation_method = 'bypass', enabled_by = $2, enabled_at = now()
+     where id = $3 returning *`,
+    [token, req.user.id, target.id]
+  );
+  res.json(publicUser(rows[0]));
 });
 
 // POST /api/users/:id/resend-activation
@@ -122,6 +163,9 @@ router.patch('/:id/active', requireAuth, requireRole('superadmin', 'facilityadmi
 
   if (req.user.role === 'facilityadmin' && target.facility_id !== req.user.facilityId) {
     return res.status(403).json({ error: 'You can only manage users at your own facility.' });
+  }
+  if (active && target.status === 'bypass_pending') {
+    return res.status(400).json({ error: 'This account is already enabled and awaiting the user\'s first-time password setup.' });
   }
 
   const newStatus = active ? 'active' : 'inactive';

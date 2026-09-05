@@ -436,6 +436,11 @@
           </select>
           <label>Facility</label>
           <select id="newUserFacility"></select>
+          <label>Activation method</label>
+          <select id="newUserActivationMethod">
+            <option value="email">Send activation email (user clicks a link to set their password)</option>
+            <option value="bypass">Enable directly — no email (user sets password at first login)</option>
+          </select>
           <button class="primary" id="addUserBtn">Add user</button>
         </div>
         <div class="card">
@@ -486,10 +491,14 @@
           <div id="newRoundSampleNames"></div>
           <label>Submission deadline</label>
           <input type="date" id="newRoundDeadline">
-          <label>Testing instructions *</label>
-          <textarea id="newRoundInstructions" placeholder="e.g. Handling notes, expected turnaround, reporting format"></textarea>
-          <label>Attach instructions file (optional)</label>
+          <label>Attach instructions file *</label>
           <input type="file" id="newRoundInstructionsFile">
+          <label>Participating facilities</label>
+          <div style="display:flex; gap:14px; align-items:center; margin:4px 0;">
+            <label style="display:inline-flex; align-items:center; gap:4px; font-weight:normal;"><input type="radio" name="participationMode" id="participationAll" value="all" checked style="width:auto;"> All facilities</label>
+            <label style="display:inline-flex; align-items:center; gap:4px; font-weight:normal;"><input type="radio" name="participationMode" id="participationSelected" value="selected" style="width:auto;"> Select individual laboratories</label>
+          </div>
+          <div id="participantFacilityList" style="display:none; max-height:160px; overflow:auto; border:1px solid #ccc; border-radius:6px; padding:8px; margin-bottom:8px;"></div>
           <button class="primary" id="addRoundBtn">Create round(s)</button>
         </div>
         <div class="card">
@@ -644,6 +653,11 @@ function showToast(msg){
 }
 function uid(prefix){ return prefix + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function facilityName(id){ const f = FACILITIES.find(x=>x.id===id); return f ? f.name : '—'; }
+function participationLabel(r){
+  if(r.participationMode !== 'selected') return 'All facilities';
+  const ids = r.participantFacilityIds || [];
+  return 'Selected: ' + ids.map(id=>facilityName(Number(id))).join(', ');
+}
 
 /* ---------------- Countdown ---------------- */
 function countdownInfo(deadline){
@@ -692,12 +706,18 @@ document.getElementById('bootstrapBtn').addEventListener('click', async ()=>{
 document.getElementById('loginBtn').addEventListener('click', async ()=>{
   const username = document.getElementById('loginUsername').value.trim();
   const password = document.getElementById('loginPassword').value;
-  if(!username || !password){ showToast('Enter your username and password.'); return; }
+  if(!username){ showToast('Enter your username.'); return; }
   try{
-    const { token, user } = await api('/auth/login', { method:'POST', body:{ username, password } });
-    authToken = token;
-    localStorage.setItem('ilc_token', token);
-    await setSession(user);
+    const result = await api('/auth/login', { method:'POST', body:{ username, password } });
+    if(result.requiresSetup){
+      pendingBypassToken = result.setupToken;
+      document.getElementById('activationNote').textContent = `Welcome, ${result.name} (${result.username}). Choose a password to complete your first-time sign-in.`;
+      showAuthCard('activationCard');
+      return;
+    }
+    authToken = result.token;
+    localStorage.setItem('ilc_token', result.token);
+    await setSession(result.user);
   }catch(e){ showToast(e.message); }
 });
 
@@ -918,6 +938,14 @@ function updateFacilityAdminOptionState(){
 document.getElementById('newUserFacility').addEventListener('change', updateFacilityAdminOptionState);
 document.getElementById('usersFacilityFilter').addEventListener('change', renderAccess);
 
+function auditLine(u){
+  const parts = [];
+  if(u.createdBy){ const c = USERS.find(x=>x.id===u.createdBy); parts.push(`Created by ${c ? c.name : '#'+u.createdBy}`); }
+  if(u.activationMethod==='bypass') parts.push('via Super Admin bypass');
+  if(u.enabledBy && u.activationMethod==='bypass'){ const en = USERS.find(x=>x.id===u.enabledBy); parts.push(`enabled by ${en ? en.name : '#'+u.enabledBy}${u.enabledAt ? ' on ' + new Date(u.enabledAt).toLocaleDateString() : ''}`); }
+  if(u.setupCompletedAt) parts.push(`password set ${new Date(u.setupCompletedAt).toLocaleDateString()}`);
+  return parts.join(' · ');
+}
 function renderAccess(){
   populateFacilitySelects();
   const el = document.getElementById('usersList');
@@ -927,7 +955,7 @@ function renderAccess(){
   const facilityOpts = FACILITIES.map(f=>`<option value="${f.id}">${f.name}</option>`).join('');
   el.innerHTML = filtered.map(u=>`
     <div class="row-item" style="flex-wrap:wrap; gap:8px;">
-      <div><strong>${u.name}</strong><div class="meta">${roleLabel(u.role)}${u.facilityId ? ' · ' + facilityName(u.facilityId) : ''} · ${statusBadge(u)}</div></div>
+      <div><strong>${u.name}</strong><div class="meta">${roleLabel(u.role)}${u.facilityId ? ' · ' + facilityName(u.facilityId) : ''} · ${statusBadge(u)}</div>${auditLine(u) ? `<div class="meta">${auditLine(u)}</div>` : ''}</div>
       <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
         ${u.id===session.userId ? '' : `
         <select class="role-select" data-id="${u.id}" style="width:auto; margin:0;">
@@ -940,8 +968,8 @@ function renderAccess(){
         </select>
         <button class="secondary small save-role" data-id="${u.id}">Save role</button>
         `}
-        ${(u.status==='pending_activation'||u.status==='activation_expired') ? `<button class="secondary small resend-activation" data-id="${u.id}">Resend activation</button>` : ''}
-        <button class="secondary small toggle-active" data-id="${u.id}">${u.active===false ? 'Enable' : 'Disable'}</button>
+        ${(u.status==='pending_activation'||u.status==='activation_expired') ? `<button class="secondary small resend-activation" data-id="${u.id}">Resend activation</button><button class="secondary small enable-bypass" data-id="${u.id}">Enable via bypass</button>` : ''}
+        ${u.status==='bypass_pending' ? '' : `<button class="secondary small toggle-active" data-id="${u.id}">${u.active===false ? 'Enable' : 'Disable'}</button>`}
         ${u.id===session.userId ? '' : `<button class="secondary small delete-user" data-id="${u.id}">Delete</button>`}
       </div>
     </div>`).join('');
@@ -994,6 +1022,18 @@ function renderAccess(){
       }catch(e){ showToast(e.message); }
     });
   });
+  el.querySelectorAll('.enable-bypass').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const u = USERS.find(x=>x.id===Number(btn.dataset.id));
+      if(!confirm(`Enable ${u.name} without sending an activation email? They'll set their password the next time they enter their username on the login page.`)) return;
+      try{
+        const updated = await api(`/users/${btn.dataset.id}/enable-bypass`, { method:'POST' });
+        Object.assign(u, updated);
+        showToast('User enabled via bypass.');
+        renderAccess();
+      }catch(e){ showToast(e.message); }
+    });
+  });
   el.querySelectorAll('.delete-user').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const u = USERS.find(x=>x.id===Number(btn.dataset.id));
@@ -1013,15 +1053,16 @@ document.getElementById('addUserBtn').addEventListener('click', async ()=>{
   const email = document.getElementById('newUserEmail').value.trim();
   const role = document.getElementById('newUserRole').value;
   const facilityId = document.getElementById('newUserFacility').value || null;
+  const activationMethod = document.getElementById('newUserActivationMethod').value;
   if(!name || !username || !email){ showToast('Fill in name, username and email.'); return; }
   if(role !== 'superadmin' && !facilityId){ showToast('Select a facility, or add one first.'); return; }
   try{
-    const u = await api('/users', { method:'POST', body:{ name, username, email, role, facilityId } });
+    const u = await api('/users', { method:'POST', body:{ name, username, email, role, facilityId, activationMethod } });
     USERS.push(u);
     document.getElementById('newUserName').value = '';
     document.getElementById('newUserUsername').value = '';
     document.getElementById('newUserEmail').value = '';
-    showToast('User added — an activation email has been sent.');
+    showToast(activationMethod==='bypass' ? 'User added — enabled directly, no email sent.' : 'User added — an activation email has been sent.');
     if(role==='facilityadmin') FACILITY_ADMIN_COUNTS = await api('/users/facility-admin-counts');
     renderAccess();
   }catch(e){ showToast(e.message); }
@@ -1031,6 +1072,7 @@ document.getElementById('addUserBtn').addEventListener('click', async ()=>{
 function statusBadge(u){
   if(u.status==='pending_activation') return '<span class="badge" style="background:#fff3cd;color:#7a5b00;">Pending activation</span>';
   if(u.status==='activation_expired') return '<span class="badge" style="background:#fde2e2;color:#8a1f1f;">Activation expired</span>';
+  if(u.status==='bypass_pending') return '<span class="badge" style="background:#e0ecff;color:#1a3d7a;">Enabled — awaiting first sign-in</span>';
   if(u.status==='suspended') return '<span class="badge" style="background:#fde2e2;color:#8a1f1f;">Suspended</span>';
   if(u.status==='inactive') return '<span class="badge" style="background:#eee;color:#666;">Disabled</span>';
   return '<span class="badge" style="background:#e3f3ea;color:#0d3b30;">Active</span>';
@@ -1116,6 +1158,7 @@ function renderProvide(){
   const testSel = document.getElementById('newRoundTest');
   testSel.innerHTML = TESTS.map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
   renderSampleNameInputs();
+  renderParticipantFacilityList();
   const el = document.getElementById('providedRoundsList');
   const mine = ROUNDS.filter(r=>r.providingFacilityId===session.facilityId);
   if(mine.length===0){ el.innerHTML = '<div class="empty">Your facility isn&rsquo;t providing any rounds yet.</div>'; return; }
@@ -1126,6 +1169,7 @@ function renderProvide(){
       <div>
         <strong>${testById(r.testId).name}</strong>
         <div class="meta">SAMPLE ${r.sampleId} · Deadline: ${r.deadline}</div>
+        <div class="meta">Participating: ${participationLabel(r)}</div>
         ${r.instructionsFileName ? `<div class="meta"><a href="#" class="download-instructions" data-id="${r.id}" data-filename="${r.instructionsFileName}">📎 ${r.instructionsFileName}</a></div>` : ''}
         ${history.length ? `<div class="meta" style="margin-top:4px;">
           <a href="#" class="view-deadline-history" data-id="${r.id}">${history.length} deadline change${history.length===1?'':'s'} — view history</a>
@@ -1176,24 +1220,44 @@ function renderSampleNameInputs(){
     <input type="text" class="mono new-round-sample-name" placeholder="e.g. PT-XXXX-000${i+1}">`
   ).join('');
 }
+function renderParticipantFacilityList(){
+  const wrap = document.getElementById('participantFacilityList');
+  wrap.innerHTML = FACILITIES.map(f=>`
+    <label style="display:block; font-weight:normal; margin:2px 0;">
+      <input type="checkbox" class="participant-facility-cb" value="${f.id}" style="width:auto; margin-right:6px;">${f.name}
+    </label>`).join('');
+}
+document.getElementById('participationAll').addEventListener('change', ()=>{
+  document.getElementById('participantFacilityList').style.display = 'none';
+});
+document.getElementById('participationSelected').addEventListener('change', ()=>{
+  document.getElementById('participantFacilityList').style.display = 'block';
+});
 document.getElementById('newRoundSampleCount').addEventListener('change', renderSampleNameInputs);
 
 document.getElementById('addRoundBtn').addEventListener('click', async ()=>{
   const testId = document.getElementById('newRoundTest').value;
   const deadline = document.getElementById('newRoundDeadline').value;
-  const instructions = document.getElementById('newRoundInstructions').value.trim();
   const fileInput = document.getElementById('newRoundInstructionsFile');
   const sampleIds = Array.from(document.querySelectorAll('.new-round-sample-name')).map(i=>i.value.trim());
   if(!deadline){ showToast('Enter a submission deadline.'); return; }
-  if(!instructions){ showToast('Testing instructions are required.'); return; }
+  if(!fileInput.files[0]){ showToast('An instructions file attachment is required.'); return; }
   if(sampleIds.some(s=>!s)){ showToast('Name every sample slot.'); return; }
+
+  const participationMode = document.getElementById('participationSelected').checked ? 'selected' : 'all';
+  const participantFacilityIds = Array.from(document.querySelectorAll('.participant-facility-cb:checked')).map(cb=>Number(cb.value));
+  if(participationMode==='selected' && participantFacilityIds.length===0){
+    showToast('Select at least one participating facility, or choose "All facilities".');
+    return;
+  }
 
   const formData = new FormData();
   formData.append('testId', testId);
   formData.append('deadline', deadline);
-  formData.append('instructions', instructions);
   formData.append('sampleIds', JSON.stringify(sampleIds));
-  if(fileInput.files[0]) formData.append('instructionsFile', fileInput.files[0]);
+  formData.append('participationMode', participationMode);
+  if(participationMode==='selected') formData.append('participantFacilityIds', JSON.stringify(participantFacilityIds));
+  formData.append('instructionsFile', fileInput.files[0]);
 
   try{
     const res = await fetch(API_BASE + '/rounds/batch', {
@@ -1205,8 +1269,10 @@ document.getElementById('addRoundBtn').addEventListener('click', async ()=>{
     if(!res.ok) throw new Error(created.error || 'Failed to create round(s).');
     ROUNDS.push(...created);
     document.getElementById('newRoundDeadline').value = '';
-    document.getElementById('newRoundInstructions').value = '';
     fileInput.value = '';
+    document.getElementById('participationAll').checked = true;
+    document.getElementById('participantFacilityList').style.display = 'none';
+    document.querySelectorAll('.participant-facility-cb').forEach(cb=>cb.checked=false);
     document.querySelectorAll('.new-round-sample-name').forEach(i=>i.value='');
     showToast(`${created.length} round(s) created.`);
     renderProvide();
@@ -1223,6 +1289,7 @@ function renderAllRounds(){
       <div>
         <strong>${testById(r.testId).name}</strong>
         <div class="meta">SAMPLE ${r.sampleId} · provided by ${facilityName(r.providingFacilityId)} · Deadline: ${r.deadline}</div>
+        <div class="meta">Participating: ${participationLabel(r)}</div>
         ${r.instructions ? `<div class="meta">Instructions: ${r.instructions}</div>` : ''}
         ${r.instructionsFileName ? `<div class="meta"><a href="#" class="download-instructions-admin" data-id="${r.id}" data-filename="${r.instructionsFileName}">📎 ${r.instructionsFileName}</a></div>` : ''}
         ${(r.deadlineHistory||[]).length ? `<a href="#" class="view-deadline-history-admin" data-id="${r.id}">${r.deadlineHistory.length} deadline change(s) — view history</a>` : ''}
@@ -1846,12 +1913,14 @@ document.getElementById('forgotSubmitBtn').addEventListener('click', async ()=>{
   }catch(e){ showToast(e.message); }
 });
 
+let pendingBypassToken = null;
 document.getElementById('activationSubmitBtn').addEventListener('click', async ()=>{
-  const token = new URLSearchParams(window.location.search).get('activate');
+  const token = pendingBypassToken || new URLSearchParams(window.location.search).get('activate');
   const password = document.getElementById('activationPassword').value;
   if(!password || password.length < 8){ showToast('Password must be at least 8 characters.'); return; }
   try{
     const { token: authToken2, user } = await api('/auth/activate', { method:'POST', body:{ token, password } });
+    pendingBypassToken = null;
     authToken = authToken2;
     localStorage.setItem('ilc_token', authToken);
     window.history.replaceState({}, '', window.location.pathname);
