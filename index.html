@@ -1670,24 +1670,151 @@ async function renderMyFeedback(){
     });
   });
 }
+function analyteMeta(testId){
+  const t = testById(testId);
+  if(t.kind==='bloodgroup') return [
+    {key:'abo', label:'ABO group', unit:''},
+    {key:'rhesus', label:'Rhesus', unit:''},
+    {key:'saline', label:'Cross match — Saline', unit:''},
+    {key:'ahg', label:'Cross match — AHG', unit:''},
+  ];
+  if(t.kind==='serology') return [{key:'value', label:'Result', unit:''}];
+  if(t.kind==='fbc') return FBC_ANALYTES;
+  if(t.kind==='chem') return CHEM_ANALYTES;
+  return [];
+}
+function isQuantitativeTest(testId){
+  const t = testById(testId);
+  return t.kind==='fbc' || t.kind==='chem';
+}
+function round2(n){ return (typeof n==='number' && isFinite(n)) ? Math.round(n*100)/100 : n; }
+function gradeLabel(status){
+  if(status==='acceptable') return 'ACC';
+  if(status==='unacceptable') return 'UNACC';
+  if(status==='not_performed') return 'NP';
+  return 'NE';
+}
 function printFeedback(round, sub){
   const fb = sub.feedback || {status:'not_evaluated'};
   const status = fb.status==='acceptable' ? 'ACCEPTABLE' : fb.status==='unacceptable' ? 'UNACCEPTABLE' : 'NOT EVALUATED';
+  const test = testById(round.testId);
+  const meta = analyteMeta(round.testId);
+  const quant = isQuantitativeTest(round.testId);
+  const hasFieldData = !!(fb.fields && fb.fieldStats);
+
+  let tableRows = '';
+  if(hasFieldData){
+    if(quant){
+      tableRows = meta.map(a=>{
+        const fs = fieldState(sub.result, a.key);
+        const stat = fb.fieldStats[a.key] || {};
+        const fEval = fb.fields[a.key] || {};
+        const resultText = fs.notPerformed ? 'Not Performed' : (fs.value!=null && fs.value!=='' ? `${fs.value}${a.unit?' '+a.unit:''}` : '—');
+        let mean='—', sd='—', range='—', sdi='—';
+        if(stat && !stat.insufficientData && typeof stat.mean==='number'){
+          mean = round2(stat.mean); sd = round2(stat.sd);
+          range = `${round2(stat.mean - 2*stat.sd)} – ${round2(stat.mean + 2*stat.sd)}`;
+        }
+        if(fEval && typeof fEval.sdi==='number'){ sdi = fEval.sdi===Infinity ? '∞' : fEval.sdi.toFixed(2); }
+        const grade = gradeLabel(fEval.status);
+        const n = (stat && typeof stat.n==='number') ? stat.n : '—';
+        return `<tr>
+          <td>${a.label}</td>
+          <td>${resultText}</td>
+          <td style="text-align:center;">${grade}</td>
+          <td style="text-align:center;">${n}</td>
+          <td style="text-align:center;">${mean}</td>
+          <td style="text-align:center;">${sd}</td>
+          <td style="text-align:center;">${sdi}</td>
+          <td style="text-align:center;">${range}</td>
+          <td>Peer Group Mean ± 2 SD</td>
+        </tr>`;
+      }).join('');
+    } else {
+      tableRows = meta.map(a=>{
+        const fs = fieldState(sub.result, a.key);
+        const stat = fb.fieldStats[a.key] || {};
+        const fEval = fb.fields[a.key] || {};
+        const resultText = fs.notPerformed ? 'Not Performed' : (fs.value || '—');
+        let consensus='—', agreement='—';
+        if(stat && !stat.insufficientData){
+          consensus = stat.tie ? 'No consensus' : (stat.consensusValue || '—');
+          agreement = (typeof stat.percentAgreement==='number') ? `${stat.percentAgreement}%` : '—';
+        }
+        const grade = gradeLabel(fEval.status);
+        const n = (stat && typeof stat.n==='number') ? stat.n : '—';
+        return `<tr>
+          <td>${a.label}</td>
+          <td>${resultText}</td>
+          <td style="text-align:center;">${grade}</td>
+          <td style="text-align:center;">${n}</td>
+          <td style="text-align:center;">${consensus}</td>
+          <td style="text-align:center;">${agreement}</td>
+          <td>Majority Consensus</td>
+        </tr>`;
+      }).join('');
+    }
+  }
+
+  const headerCols = !hasFieldData ? '' : (quant
+    ? `<tr><th>Analyte</th><th>Result</th><th>Grade</th><th>Peer Group N</th><th>Mean</th><th>SD</th><th>SDI</th><th>Acceptable Range</th><th>Evaluation Criteria</th></tr>`
+    : `<tr><th>Analyte</th><th>Result</th><th>Grade</th><th>Peer Group N</th><th>Consensus</th><th>% Agreement</th><th>Evaluation Criteria</th></tr>`);
+
+  const acceptedText = sub.sampleAcceptability === 'rejected' ? 'No' : (sub.sampleAcceptability === 'accepted' ? 'Yes' : '—');
+  const coatOfArmsSrc = (document.getElementById('headerCoatOfArms') || {}).src || '';
+
   document.getElementById('printArea').innerHTML = `
-    <div style="font-family:Arial,sans-serif; color:#12211F;">
-      <h2 style="margin-bottom:0;">Copperbelt Province Interlaboratory Programme</h2>
-      <p style="color:#555; margin-top:2px;">Result Feedback Certificate</p>
-      <hr>
-      <p><strong>Facility:</strong> ${facilityName(sub.facilityId)}</p>
-      <p><strong>Test:</strong> ${testById(round.testId).name}</p>
-      <p><strong>Sample ID:</strong> ${round.sampleId}</p>
-      <p><strong>Submitted result:</strong> ${formatResultSummary(round.testId, sub.result)}</p>
-      <p><strong>Date submitted:</strong> ${new Date(sub.submittedAt).toLocaleString()}</p>
-      <p><strong>Tested by:</strong> ${sub.personnelTesting} &nbsp; <strong>Verified by:</strong> ${sub.personnelVerifying}</p>
-      <hr>
-      <p style="font-size:20px; font-weight:bold;">Status: ${status}</p>
-      ${fb.comment ? `<p><strong>Evaluator comment:</strong> ${fb.comment}</p>` : ''}
-      ${fb.authorizedBy ? `<p style="color:#555; font-size:12px;">Verified by ${fb.verifiedBy} · Authorized by ${fb.authorizedBy} on ${new Date(fb.authorizedAt).toLocaleString()}</p>` : ''}
+    <div style="font-family:Arial,sans-serif; color:#12211F; font-size:13px;">
+      <table style="width:100%; border-collapse:collapse; margin-bottom:8px;">
+        <tr>
+          <td style="vertical-align:middle; width:56px;">${coatOfArmsSrc ? `<img src="${coatOfArmsSrc}" style="height:44px; width:auto;">` : ''}</td>
+          <td style="vertical-align:middle;">
+            <div style="font-weight:bold; font-size:15px;">Ministry of Health, Zambia</div>
+            <div style="font-size:12px; color:#555;">Copperbelt Province Interlaboratory Comparison Programme</div>
+          </td>
+          <td style="text-align:right; vertical-align:middle; font-size:11px; color:#555;">
+            Print date: ${new Date().toLocaleDateString()}<br>
+            Status: ${fb.released ? 'FINAL' : 'DRAFT'}
+          </td>
+        </tr>
+      </table>
+      <h2 style="margin:6px 0 10px; border-bottom:2px solid #12211F; padding-bottom:6px;">Performance Report</h2>
+
+      <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:12px;">
+        <tr>
+          <td style="width:33%; vertical-align:top;"><strong>Participant</strong><br>${facilityName(sub.facilityId)}</td>
+          <td style="width:33%; vertical-align:top;"><strong>Test / Sample</strong><br>${test.name} — Sample ${round.sampleId}</td>
+          <td style="width:33%; vertical-align:top;"><strong>Results Deadline</strong><br>${round.deadline || '—'}</td>
+        </tr>
+      </table>
+
+      <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:12px; border:1px solid #ccc;">
+        <tr style="background:#f2f2f2;"><td colspan="2" style="padding:4px 6px;"><strong>Sample Conditions</strong></td></tr>
+        <tr><td style="padding:4px 6px; width:50%;">Date sample received</td><td style="padding:4px 6px;">${sub.dateReceived || '—'}</td></tr>
+        <tr><td style="padding:4px 6px;">Received in good condition?</td><td style="padding:4px 6px;">${acceptedText}${sub.sampleAcceptability==='rejected' && sub.sampleRejectionReason ? ' — '+sub.sampleRejectionReason : ''}</td></tr>
+        <tr><td style="padding:4px 6px;">Comments</td><td style="padding:4px 6px;">${sub.sampleCondition || '—'}</td></tr>
+        <tr><td style="padding:4px 6px;">Method / Instrument</td><td style="padding:4px 6px;">${sub.methodUsed || '—'}</td></tr>
+      </table>
+
+      ${hasFieldData ? `
+      <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:11px;" border="1">
+        <thead>${headerCols}</thead>
+        <tbody>${tableRows}</tbody>
+      </table>` : `
+      <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:12px; border:1px solid #ccc;">
+        <tr><td style="padding:6px;"><strong>Submitted result:</strong> ${formatResultSummary(round.testId, sub.result)}</td></tr>
+      </table>`}
+
+      <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:13px;">
+        <tr><td><strong>Overall Result Status:</strong> ${status}</td></tr>
+        ${fb.comment ? `<tr><td style="padding-top:4px; white-space:pre-line;"><strong>Evaluator comment:</strong>\n${fb.comment}</td></tr>` : ''}
+      </table>
+
+      <p style="margin:14px 0 2px; font-size:12px;">Reviewed by: ${fb.verifiedBy || '—'}</p>
+      ${fb.authorizedBy ? `<p style="margin:0; font-size:12px;">Authorized by: ${fb.authorizedBy} on ${new Date(fb.authorizedAt).toLocaleDateString()}</p>` : ''}
+
+      <hr style="margin-top:16px;">
+      <p style="font-size:10px; color:#777;">Report prepared by the Copperbelt Province Interlaboratory Comparison Programme, Ministry of Health, Zambia.</p>
     </div>`;
   window.print();
 }

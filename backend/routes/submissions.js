@@ -403,6 +403,8 @@ router.post('/:roundId/consensus/apply', requireAuth, requireRole('facilityadmin
     const feedback = {
       status: entry.overall,
       comment: entry.comment,
+      fields: entry.fields || {},
+      fieldStats: report.fieldStats,
       verifiedBy: req.user.name,
       verifiedAt: new Date().toISOString(),
       authorizedBy: null,
