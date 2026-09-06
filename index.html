@@ -589,9 +589,11 @@
             <textarea id="sampleRejectionReason" placeholder="e.g. Sample leaked in transit, received outside stability window"></textarea>
           </div>
 
-          <h3 class="fieldset-title">Result</h3>
-          <div id="dynamicResultFieldsWrap">
-            <div id="dynamicResultFields"></div>
+          <div id="resultSectionWrap">
+            <h3 class="fieldset-title">Result</h3>
+            <div id="dynamicResultFieldsWrap">
+              <div id="dynamicResultFields"></div>
+            </div>
           </div>
 
           <h3 class="fieldset-title">Personnel</h3>
@@ -1910,6 +1912,7 @@ async function renderSubmit(){
   document.getElementById('sampleRejected').checked = mine?.sampleAcceptability === 'rejected';
   document.getElementById('sampleRejectionReason').value = mine?.sampleRejectionReason || '';
   document.getElementById('rejectionReasonWrap').style.display = mine?.sampleAcceptability === 'rejected' ? 'block' : 'none';
+  document.getElementById('resultSectionWrap').style.display = mine?.sampleAcceptability === 'rejected' ? 'none' : 'block';
 
   const closed = c.status === 'closed';
   const locked = mine?.status === 'submitted';
@@ -1918,12 +1921,13 @@ async function renderSubmit(){
   document.getElementById('submitFinalBtn').textContent = locked ? 'Already submitted' : 'Submit final result';
 }
 
-// Sample Acceptability is a sample-level decision only. It no longer forces or hides the
-// per-analyte result fields — "Test Not Performed" is chosen independently for each analyte.
+// A rejected sample was never tested, so there's nothing to report — hide the Result
+// section entirely and leave only the rejection reason for the facility to fill in.
 document.querySelectorAll('input[name="sampleAcceptability"]').forEach(r=>{
   r.addEventListener('change', ()=>{
     const rejected = document.getElementById('sampleRejected').checked;
     document.getElementById('rejectionReasonWrap').style.display = rejected ? 'block' : 'none';
+    document.getElementById('resultSectionWrap').style.display = rejected ? 'none' : 'block';
   });
 });
 
