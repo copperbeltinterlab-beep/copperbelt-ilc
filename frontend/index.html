@@ -481,6 +481,22 @@
         <div class="card">
           <label>Test</label>
           <select id="newRoundTest"></select>
+          <label>ILC Year</label>
+          <select id="newRoundYear"></select>
+          <label>Round Number</label>
+          <select id="newRoundNumber">
+            <option value="1">Round 1</option>
+            <option value="2">Round 2</option>
+            <option value="3">Round 3</option>
+            <option value="4">Round 4</option>
+            <option value="5">Round 5</option>
+            <option value="6">Round 6</option>
+            <option value="7">Round 7</option>
+            <option value="8">Round 8</option>
+            <option value="9">Round 9</option>
+            <option value="10">Round 10</option>
+          </select>
+          <div class="meta" id="newRoundLabelPreview" style="margin:2px 0 8px;"></div>
           <label>Number of samples</label>
           <select id="newRoundSampleCount">
             <option value="2">2</option>
@@ -503,6 +519,10 @@
         </div>
         <div class="card">
           <h3 class="subsection" style="margin-top:0;">Rounds our facility provides</h3>
+          <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <button class="secondary small provide-subtab active" data-status="active">Active</button>
+            <button class="secondary small provide-subtab" data-status="closed">Closed</button>
+          </div>
           <div id="providedRoundsList"></div>
         </div>
       </div>
@@ -511,6 +531,10 @@
     <section class="tab-panel" id="tab-allrounds">
       <h2 class="section">All ILC rounds</h2>
       <div class="note" style="margin-bottom:12px;">Super Admins can view every round across the province and adjust or close deadlines, but only Facility Admins can create new rounds.</div>
+      <div style="display:flex; gap:8px; margin-bottom:10px;">
+        <button class="secondary small allrounds-subtab active" data-status="active">Active</button>
+        <button class="secondary small allrounds-subtab" data-status="closed">Closed</button>
+      </div>
       <div id="allRoundsList"></div>
     </section>
 
@@ -690,7 +714,7 @@ async function api(path, { method = 'GET', body } = {}) {
   return data;
 }
 
-let FACILITIES = [], USERS = [], ROUNDS = [];
+let FACILITIES = [], USERS = [], ROUNDS = [], PACKAGES = [];
 let session = null;
 let selectedRoundId = null;
 
@@ -701,6 +725,10 @@ function showToast(msg){
 }
 function uid(prefix){ return prefix + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function facilityName(id){ const f = FACILITIES.find(x=>x.id===id); return f ? f.name : '—'; }
+function packageById(id){ return PACKAGES.find(p=>String(p.id)===String(id)); }
+// Reverse-lookup: given a flat sample/round id, find its parent package (undefined for any
+// pre-packaging round that somehow has no parent — shouldn't happen after the Phase 8 backfill).
+function packageForRoundId(roundId){ return PACKAGES.find(p=>p.samples.some(s=>String(s.id)===String(roundId))); }
 function participationLabel(r){
   if(r.participationMode !== 'selected') return 'All facilities';
   const ids = r.participantFacilityIds || [];
@@ -843,6 +871,7 @@ function enterApp(){
 async function loadAllData(){
   FACILITIES = await api('/facilities');
   ROUNDS = await api('/rounds');
+  PACKAGES = await api('/round-packages');
   if(session.role === 'superadmin' || session.role === 'facilityadmin'){
     USERS = await api('/users');
   }
@@ -1201,64 +1230,159 @@ async function downloadInstructionsFile(roundId, fileName){
     URL.revokeObjectURL(url);
   }catch(e){ showToast('Could not download file.'); }
 }
+async function downloadPackageInstructionsFile(packageId, fileName){
+  try{
+    const res = await fetch(API_BASE + `/round-packages/${packageId}/instructions-file`, {
+      headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+    });
+    if(!res.ok){ showToast('Could not download file.'); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName || 'instructions';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }catch(e){ showToast('Could not download file.'); }
+}
 
+let provideSubTab = 'active';
 function renderProvide(){
   const testSel = document.getElementById('newRoundTest');
   testSel.innerHTML = TESTS.map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
+  const yearSel = document.getElementById('newRoundYear');
+  if(!yearSel.dataset.populated){
+    const nowYear = new Date().getFullYear();
+    const startYear = Math.max(2026, nowYear);
+    const years = Array.from({length:6}, (_,i)=>startYear+i);
+    yearSel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join('');
+    yearSel.dataset.populated = '1';
+  }
   renderSampleNameInputs();
   renderParticipantFacilityList();
-  const el = document.getElementById('providedRoundsList');
-  const mine = ROUNDS.filter(r=>r.providingFacilityId===session.facilityId);
-  if(mine.length===0){ el.innerHTML = '<div class="empty">Your facility isn&rsquo;t providing any rounds yet.</div>'; return; }
-  el.innerHTML = mine.map(r=>{
-    const c = countdownInfo(r.deadline);
-    const history = r.deadlineHistory || [];
-    return `<div class="row-item" style="flex-wrap:wrap; gap:8px; align-items:flex-start;">
-      <div>
-        <strong>${testById(r.testId).name}</strong>
-        <div class="meta">SAMPLE ${r.sampleId} · Deadline: ${r.deadline}</div>
-        <div class="meta">Participating: ${participationLabel(r)}</div>
-        ${r.instructionsFileName ? `<div class="meta"><a href="#" class="download-instructions" data-id="${r.id}" data-filename="${r.instructionsFileName}">📎 ${r.instructionsFileName}</a></div>` : ''}
-        ${history.length ? `<div class="meta" style="margin-top:4px;">
-          <a href="#" class="view-deadline-history" data-id="${r.id}">${history.length} deadline change${history.length===1?'':'s'} — view history</a>
-        </div>` : ''}
-      </div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <span class="badge ${c.cls}">${c.label || 'Closed'}</span>
-        <button class="secondary small edit-deadline" data-id="${r.id}">Change deadline</button>
-      </div>
-    </div>`;
-  }).join('');
-  el.querySelectorAll('.download-instructions').forEach(link=>{
-    link.addEventListener('click', (e)=>{ e.preventDefault(); downloadInstructionsFile(link.dataset.id, link.dataset.filename); });
-  });
+  updateRoundLabelPreview();
 
-  el.querySelectorAll('.edit-deadline').forEach(btn=>{
+  const el = document.getElementById('providedRoundsList');
+  const mine = PACKAGES.filter(p=>p.providingFacilityId===session.facilityId && p.status===provideSubTab);
+  if(mine.length===0){
+    el.innerHTML = `<div class="empty">No ${provideSubTab} rounds${provideSubTab==='active'?' yet':''}.</div>`;
+    return;
+  }
+  el.innerHTML = mine.map(p=>`
+    <div class="row-item" style="flex-wrap:wrap; gap:8px; align-items:flex-start;">
+      <div>
+        <strong>${p.label} — ${testById(p.testId).name} — ${p.samples.length} Sample${p.samples.length===1?'':'s'}</strong>
+        <div class="meta">Deadline: ${p.deadline || '—'}</div>
+        <div class="meta">Samples: ${p.samples.map(s=>s.sampleId).join(', ')}</div>
+        <div class="meta">Participating: ${participationLabel(p)}</div>
+        ${p.instructionsFileName ? `<div class="meta"><a href="#" class="download-pkg-instructions" data-id="${p.id}" data-filename="${p.instructionsFileName}">📎 ${p.instructionsFileName}</a></div>` : ''}
+        ${p.status==='closed' ? `<div class="meta">Closed ${p.closedAt ? new Date(p.closedAt).toLocaleDateString() : ''}</div>` : ''}
+      </div>
+      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        ${p.status==='active' ? `
+          <button class="secondary small pkg-edit-deadline" data-id="${p.id}">Change deadline</button>
+          <button class="secondary small pkg-add-sample" data-id="${p.id}">Add sample</button>
+          <button class="secondary small pkg-close" data-id="${p.id}">Close round</button>
+        ` : `
+          <button class="secondary small pkg-reopen" data-id="${p.id}">Reopen</button>
+        `}
+        <button class="secondary small pkg-delete" data-id="${p.id}">Delete</button>
+      </div>
+    </div>`).join('');
+
+  el.querySelectorAll('.download-pkg-instructions').forEach(link=>{
+    link.addEventListener('click', (e)=>{ e.preventDefault(); downloadPackageInstructionsFile(link.dataset.id, link.dataset.filename); });
+  });
+  el.querySelectorAll('.pkg-edit-deadline').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      const r = ROUNDS.find(x=>x.id===Number(btn.dataset.id));
-      const newDeadline = prompt(`Current deadline: ${r.deadline}\nEnter new deadline (YYYY-MM-DD):`, r.deadline);
+      const p = packageById(btn.dataset.id);
+      const newDeadline = prompt(`Current deadline: ${p.deadline}\nEnter new deadline (YYYY-MM-DD):`, p.deadline);
       if(!newDeadline) return;
       const reason = prompt('Reason for changing this deadline (required, visible in the audit history):');
       if(!reason || !reason.trim()){ showToast('A reason is required to change a deadline.'); return; }
       try{
-        const updated = await api(`/rounds/${r.id}/deadline`, { method:'PATCH', body:{ newDeadline, reason } });
-        Object.assign(r, updated);
+        const fd = new FormData();
+        fd.append('deadline', newDeadline);
+        fd.append('deadlineReason', reason);
+        const updated = await patchPackage(p.id, fd);
+        Object.assign(p, updated);
         showToast('Deadline updated.');
         renderProvide();
       }catch(e){ showToast(e.message); }
     });
   });
-  el.querySelectorAll('.view-deadline-history').forEach(link=>{
-    link.addEventListener('click', (e)=>{
-      e.preventDefault();
-      const r = ROUNDS.find(x=>x.id===Number(link.dataset.id));
-      const lines = (r.deadlineHistory || []).map(h=>
-        `${h.changedAt.slice(0,10)} — ${h.previousDeadline} → ${h.newDeadline} (by ${h.changedBy})\nReason: ${h.reason}`
-      ).join('\n\n');
-      alert(`Deadline change history for SAMPLE ${r.sampleId}:\n\n${lines}`);
+  el.querySelectorAll('.pkg-add-sample').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const p = packageById(btn.dataset.id);
+      if(p.samples.length >= 5){ showToast('This round already has the maximum of 5 samples.'); return; }
+      const name = prompt('Name for the new sample:');
+      if(!name || !name.trim()) return;
+      try{
+        const fd = new FormData();
+        fd.append('addSamples', JSON.stringify([name.trim()]));
+        const updated = await patchPackage(p.id, fd);
+        Object.assign(p, updated);
+        showToast('Sample added.');
+        renderProvide();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+  el.querySelectorAll('.pkg-close').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('Close this round? Facility Users will lose active/result-entry access. All samples, results and feedback are preserved and this can be reopened later.')) return;
+      try{
+        await api(`/round-packages/${btn.dataset.id}/close`, { method:'POST' });
+        showToast('Round closed.');
+        PACKAGES = await api('/round-packages');
+        renderProvide();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+  el.querySelectorAll('.pkg-reopen').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      try{
+        await api(`/round-packages/${btn.dataset.id}/reopen`, { method:'POST' });
+        showToast('Round reopened.');
+        PACKAGES = await api('/round-packages');
+        renderProvide();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+  el.querySelectorAll('.pkg-delete').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('Delete this round permanently? This only works if no results have been entered for any of its samples. If in doubt, close it instead.')) return;
+      try{
+        await api(`/round-packages/${btn.dataset.id}`, { method:'DELETE' });
+        showToast('Round deleted.');
+        PACKAGES = PACKAGES.filter(p=>String(p.id)!==String(btn.dataset.id));
+        renderProvide();
+      }catch(e){ showToast(e.message); }
     });
   });
 }
+function updateRoundLabelPreview(){
+  const year = document.getElementById('newRoundYear').value;
+  const num = document.getElementById('newRoundNumber').value;
+  document.getElementById('newRoundLabelPreview').textContent = year && num ? `This will be created as: Round ${num} of ${year}` : '';
+}
+async function patchPackage(id, formData){
+  const res = await fetch(API_BASE + '/round-packages/' + id, {
+    method: 'PATCH',
+    headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+    body: formData,
+  });
+  const data = await res.json();
+  if(!res.ok) throw new Error(data.error || 'Update failed.');
+  return data;
+}
+document.getElementById('newRoundYear').addEventListener('change', updateRoundLabelPreview);
+document.getElementById('newRoundNumber').addEventListener('change', updateRoundLabelPreview);
+document.querySelectorAll('.provide-subtab').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    provideSubTab = btn.dataset.status;
+    document.querySelectorAll('.provide-subtab').forEach(b=>b.classList.toggle('active', b===btn));
+    renderProvide();
+  });
+});
 function renderSampleNameInputs(){
   const count = Number(document.getElementById('newRoundSampleCount').value || 2);
   const wrap = document.getElementById('newRoundSampleNames');
@@ -1285,6 +1409,8 @@ document.getElementById('newRoundSampleCount').addEventListener('change', render
 
 document.getElementById('addRoundBtn').addEventListener('click', async ()=>{
   const testId = document.getElementById('newRoundTest').value;
+  const year = document.getElementById('newRoundYear').value;
+  const roundNumber = document.getElementById('newRoundNumber').value;
   const deadline = document.getElementById('newRoundDeadline').value;
   const fileInput = document.getElementById('newRoundInstructionsFile');
   const sampleIds = Array.from(document.querySelectorAll('.new-round-sample-name')).map(i=>i.value.trim());
@@ -1301,6 +1427,8 @@ document.getElementById('addRoundBtn').addEventListener('click', async ()=>{
 
   const formData = new FormData();
   formData.append('testId', testId);
+  formData.append('year', year);
+  formData.append('roundNumber', roundNumber);
   formData.append('deadline', deadline);
   formData.append('sampleIds', JSON.stringify(sampleIds));
   formData.append('participationMode', participationMode);
@@ -1308,92 +1436,117 @@ document.getElementById('addRoundBtn').addEventListener('click', async ()=>{
   formData.append('instructionsFile', fileInput.files[0]);
 
   try{
-    const res = await fetch(API_BASE + '/rounds/batch', {
+    const res = await fetch(API_BASE + '/round-packages', {
       method: 'POST',
       headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
       body: formData,
     });
     const created = await res.json();
-    if(!res.ok) throw new Error(created.error || 'Failed to create round(s).');
-    ROUNDS.push(...created);
+    if(!res.ok) throw new Error(created.error || 'Failed to create round.');
+    PACKAGES.push(created);
+    ROUNDS = await api('/rounds');
     document.getElementById('newRoundDeadline').value = '';
     fileInput.value = '';
     document.getElementById('participationAll').checked = true;
     document.getElementById('participantFacilityList').style.display = 'none';
     document.querySelectorAll('.participant-facility-cb').forEach(cb=>cb.checked=false);
     document.querySelectorAll('.new-round-sample-name').forEach(i=>i.value='');
-    showToast(`${created.length} round(s) created.`);
+    showToast(`${created.label} — ${testById(created.testId).name} — ${created.samples.length} samples created.`);
+    provideSubTab = 'active';
+    document.querySelectorAll('.provide-subtab').forEach(b=>b.classList.toggle('active', b.dataset.status==='active'));
     renderProvide();
   }catch(e){ showToast(e.message); }
 });
 
 /* ---------------- SUPER ADMIN: All ILC Rounds ---------------- */
+let allRoundsSubTab = 'active';
 function renderAllRounds(){
   const el = document.getElementById('allRoundsList');
-  if(ROUNDS.length===0){ el.innerHTML = '<div class="empty">No rounds have been created yet.</div>'; return; }
-  el.innerHTML = ROUNDS.map(r=>{
-    const c = countdownInfo(r.deadline);
-    return `<div class="card row-item" style="flex-wrap:wrap; gap:8px;">
+  const list = PACKAGES.filter(p=>p.status===allRoundsSubTab);
+  if(list.length===0){ el.innerHTML = `<div class="empty">No ${allRoundsSubTab} rounds.</div>`; return; }
+  el.innerHTML = list.map(p=>`
+    <div class="card row-item" style="flex-wrap:wrap; gap:8px;">
       <div>
-        <strong>${testById(r.testId).name}</strong>
-        <div class="meta">SAMPLE ${r.sampleId} · provided by ${facilityName(r.providingFacilityId)} · Deadline: ${r.deadline}</div>
-        <div class="meta">Participating: ${participationLabel(r)}</div>
-        ${r.instructions ? `<div class="meta">Instructions: ${r.instructions}</div>` : ''}
-        ${r.instructionsFileName ? `<div class="meta"><a href="#" class="download-instructions-admin" data-id="${r.id}" data-filename="${r.instructionsFileName}">📎 ${r.instructionsFileName}</a></div>` : ''}
-        ${(r.deadlineHistory||[]).length ? `<a href="#" class="view-deadline-history-admin" data-id="${r.id}">${r.deadlineHistory.length} deadline change(s) — view history</a>` : ''}
+        <strong>${p.label} — ${testById(p.testId).name} — ${p.samples.length} Sample${p.samples.length===1?'':'s'}</strong>
+        <div class="meta">provided by ${facilityName(p.providingFacilityId)} · Deadline: ${p.deadline || '—'}</div>
+        <div class="meta">Samples: ${p.samples.map(s=>s.sampleId).join(', ')}</div>
+        <div class="meta">Participating: ${participationLabel(p)}</div>
+        ${p.instructionsFileName ? `<div class="meta"><a href="#" class="download-pkg-instructions-admin" data-id="${p.id}" data-filename="${p.instructionsFileName}">📎 ${p.instructionsFileName}</a></div>` : ''}
+        ${p.status==='closed' ? `<div class="meta">Closed ${p.closedAt ? new Date(p.closedAt).toLocaleDateString() : ''}</div>` : ''}
       </div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <span class="badge ${c.cls}">${c.status==='closed' ? 'Closed' : (c.label||'Open')}</span>
-        <button class="secondary small edit-deadline-admin" data-id="${r.id}">Change deadline</button>
-        <button class="secondary small close-now-admin" data-id="${r.id}">Close now</button>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        ${p.status==='active' ? `
+          <button class="secondary small pkg-edit-deadline-admin" data-id="${p.id}">Change deadline</button>
+          <button class="secondary small pkg-close-admin" data-id="${p.id}">Close now</button>
+        ` : `
+          <button class="secondary small pkg-reopen-admin" data-id="${p.id}">Reopen</button>
+        `}
+        <button class="secondary small pkg-delete-admin" data-id="${p.id}">Delete</button>
       </div>
-    </div>`;
-  }).join('');
-  el.querySelectorAll('.download-instructions-admin').forEach(link=>{
-    link.addEventListener('click', (e)=>{ e.preventDefault(); downloadInstructionsFile(link.dataset.id, link.dataset.filename); });
-  });
+    </div>`).join('');
 
-  el.querySelectorAll('.edit-deadline-admin').forEach(btn=>{
+  el.querySelectorAll('.download-pkg-instructions-admin').forEach(link=>{
+    link.addEventListener('click', (e)=>{ e.preventDefault(); downloadPackageInstructionsFile(link.dataset.id, link.dataset.filename); });
+  });
+  el.querySelectorAll('.pkg-edit-deadline-admin').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      const r = ROUNDS.find(x=>x.id===Number(btn.dataset.id));
-      const newDeadline = prompt(`Current deadline: ${r.deadline}\nEnter new deadline (YYYY-MM-DD):`, r.deadline);
+      const p = packageById(btn.dataset.id);
+      const newDeadline = prompt(`Current deadline: ${p.deadline}\nEnter new deadline (YYYY-MM-DD):`, p.deadline);
       if(!newDeadline) return;
       const reason = prompt('Reason for changing this deadline (required, visible in the audit history):');
       if(!reason || !reason.trim()){ showToast('A reason is required to change a deadline.'); return; }
       try{
-        const updated = await api(`/rounds/${r.id}/deadline`, { method:'PATCH', body:{ newDeadline, reason } });
-        Object.assign(r, updated);
+        const fd = new FormData();
+        fd.append('deadline', newDeadline);
+        fd.append('deadlineReason', reason);
+        const updated = await patchPackage(p.id, fd);
+        Object.assign(p, updated);
         showToast('Deadline updated.');
         renderAllRounds();
       }catch(e){ showToast(e.message); }
     });
   });
-  el.querySelectorAll('.close-now-admin').forEach(btn=>{
+  el.querySelectorAll('.pkg-close-admin').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      const r = ROUNDS.find(x=>x.id===Number(btn.dataset.id));
-      if(!confirm(`Close this round immediately? Facilities will no longer be able to submit results for SAMPLE ${r.sampleId}.`)) return;
-      const reason = prompt('Reason for closing this round now (required):', 'Closed early by Super Admin.');
-      if(!reason || !reason.trim()){ showToast('A reason is required.'); return; }
-      const today = new Date().toISOString().slice(0,10);
+      const p = packageById(btn.dataset.id);
+      if(!confirm(`Close ${p.label} — ${testById(p.testId).name} immediately? Facilities will no longer be able to submit results.`)) return;
       try{
-        const updated = await api(`/rounds/${r.id}/deadline`, { method:'PATCH', body:{ newDeadline: today, reason } });
-        Object.assign(r, updated);
+        await api(`/round-packages/${btn.dataset.id}/close`, { method:'POST' });
         showToast('Round closed.');
+        PACKAGES = await api('/round-packages');
         renderAllRounds();
       }catch(e){ showToast(e.message); }
     });
   });
-  el.querySelectorAll('.view-deadline-history-admin').forEach(link=>{
-    link.addEventListener('click', (e)=>{
-      e.preventDefault();
-      const r = ROUNDS.find(x=>x.id===Number(link.dataset.id));
-      const lines = (r.deadlineHistory || []).map(h=>
-        `${h.changedAt.slice(0,10)} — ${h.previousDeadline} → ${h.newDeadline} (by ${h.changedBy})\nReason: ${h.reason}`
-      ).join('\n\n');
-      alert(`Deadline change history for SAMPLE ${r.sampleId}:\n\n${lines}`);
+  el.querySelectorAll('.pkg-reopen-admin').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      try{
+        await api(`/round-packages/${btn.dataset.id}/reopen`, { method:'POST' });
+        showToast('Round reopened.');
+        PACKAGES = await api('/round-packages');
+        renderAllRounds();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+  el.querySelectorAll('.pkg-delete-admin').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('Delete this round permanently? This only works if no results have been entered for any of its samples. If in doubt, close it instead.')) return;
+      try{
+        await api(`/round-packages/${btn.dataset.id}`, { method:'DELETE' });
+        showToast('Round deleted.');
+        PACKAGES = PACKAGES.filter(p=>String(p.id)!==String(btn.dataset.id));
+        renderAllRounds();
+      }catch(e){ showToast(e.message); }
     });
   });
 }
+document.querySelectorAll('.allrounds-subtab').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    allRoundsSubTab = btn.dataset.status;
+    document.querySelectorAll('.allrounds-subtab').forEach(b=>b.classList.toggle('active', b===btn));
+    renderAllRounds();
+  });
+});
 
 /* ---------------- FACILITY ADMIN: Give Feedback ---------------- */
 async function renderFeedbackAdmin(){
@@ -1408,7 +1561,11 @@ async function renderFeedbackAdmin(){
     return;
   }
   document.getElementById('consensusPanel').style.display = 'block';
-  sel.innerHTML = mine.map(r=>`<option value="${r.id}">${testById(r.testId).name} — ${r.sampleId}</option>`).join('');
+  const myPackages = PACKAGES.filter(p=>p.providingFacilityId===session.facilityId);
+  sel.innerHTML = myPackages.map(p=>`
+    <optgroup label="${p.label} — ${testById(p.testId).name}">
+      ${p.samples.map(s=>`<option value="${s.id}">Sample ${s.sampleId}</option>`).join('')}
+    </optgroup>`).join('') || mine.map(r=>`<option value="${r.id}">${testById(r.testId).name} — ${r.sampleId}</option>`).join('');
   sel.onchange = ()=>{
     document.getElementById('consensusStats').innerHTML = '';
     document.getElementById('consensusNotSubmitted').innerHTML = '';
@@ -1545,29 +1702,39 @@ function formatResultSummary(testId, result){
 let MY_SUBMISSION_STATUS = {}; // roundId -> 'submitted' | 'draft'
 function renderRounds(){
   const el = document.getElementById('roundsList');
-  if(ROUNDS.length===0){ el.innerHTML = '<div class="empty">No rounds have been created yet.</div>'; return; }
+  // PACKAGES is already filtered server-side for this Facility User: active only, and only
+  // packages their facility is eligible to participate in.
+  if(PACKAGES.length===0){ el.innerHTML = '<div class="empty">No active rounds right now.</div>'; return; }
   el.innerHTML = '';
-  ROUNDS.forEach(r=>{
-    const c = countdownInfo(r.deadline);
-    const subStatus = MY_SUBMISSION_STATUS[r.id];
-    const subBadge = subStatus === 'submitted'
-      ? `<span class="badge" style="background:#e3f3ea;color:#0d3b30;">Results Submitted</span>`
-      : `<span class="badge" style="background:#fde2e2;color:#8a1f1f;">Results Not Submitted</span>`;
+  PACKAGES.forEach(p=>{
+    const c = countdownInfo(p.deadline);
     const div = document.createElement('div');
-    div.className = 'card round-card' + (String(r.id)===String(selectedRoundId) ? ' selected' : '');
+    div.className = 'card round-card';
     div.innerHTML = `
       <div class="row-item" style="border:none; padding:0; flex-wrap:wrap; gap:6px;">
         <div>
-          <strong>${testById(r.testId).name}</strong>
-          <div class="meta">SAMPLE ${r.sampleId} · provided by ${facilityName(r.providingFacilityId)}</div>
+          <strong>${p.label} — ${testById(p.testId).name} — ${p.samples.length} Sample${p.samples.length===1?'':'s'}</strong>
+          <div class="meta">provided by ${facilityName(p.providingFacilityId)}</div>
           <div class="countdown ${c.cls}">${c.status==='closed' ? (c.text==='No deadline set' ? c.text : 'Closed') : c.text}</div>
         </div>
-        <div style="display:flex; gap:6px; align-items:center;">
-          ${subBadge}
-          <span class="badge ${c.cls}">${c.status==='closed' ? 'Closed' : c.label}</span>
-        </div>
+        <span class="badge ${c.cls}">${c.status==='closed' ? 'Closed' : c.label}</span>
+      </div>
+      <div class="sample-chip-row" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+        ${p.samples.map(s=>{
+          const subStatus = MY_SUBMISSION_STATUS[s.id];
+          const submitted = subStatus === 'submitted';
+          return `<button class="secondary small sample-chip" data-round="${s.id}" style="${String(s.id)===String(selectedRoundId) ? 'outline:2px solid #12211F;' : ''}">
+            Sample ${s.sampleId} ${submitted ? '✓' : '·'} <span style="color:${submitted?'#0d3b30':'#8a1f1f'};">${submitted?'Submitted':'Not submitted'}</span>
+          </button>`;
+        }).join('')}
       </div>`;
-    div.addEventListener('click', ()=>{ selectedRoundId = r.id; renderRounds(); showToast(`Selected: ${testById(r.testId).name}`); });
+    div.querySelectorAll('.sample-chip').forEach(chip=>{
+      chip.addEventListener('click', ()=>{
+        selectedRoundId = Number(chip.dataset.round);
+        renderRounds();
+        showToast(`Selected: ${p.label} — Sample ${chip.textContent.trim()}`);
+      });
+    });
     el.appendChild(div);
   });
 }
@@ -1762,10 +1929,11 @@ async function renderMyFeedback(){
     const status = fb?.status || 'not_evaluated';
     const cls = status==='acceptable' ? 'ok' : status==='unacceptable' ? 'alert' : 'neutral';
     const label = status==='acceptable' ? 'Acceptable' : status==='unacceptable' ? 'Unacceptable' : 'Not Evaluated';
+    const pkg = packageForRoundId(round.id);
     return `
       <div class="card">
         <div class="row-item" style="border:none; padding-top:0;">
-          <div><strong>${testById(round.testId).name}</strong><div class="meta">SAMPLE ${round.sampleId} · submitted ${new Date(sub.submittedAt).toLocaleDateString()}</div></div>
+          <div><strong>${pkg ? pkg.label+' — ' : ''}${testById(round.testId).name}</strong><div class="meta">SAMPLE ${round.sampleId} · submitted ${new Date(sub.submittedAt).toLocaleDateString()}</div></div>
           <span class="flag ${cls}">${label}</span>
         </div>
         ${fb?.comment ? `<div class="meta" style="margin:6px 0 4px;">Comment: ${fb.comment}</div>` : ''}
@@ -1899,7 +2067,7 @@ function printFeedback(round, sub){
       <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:12px;">
         <tr>
           <td style="width:33%; vertical-align:top;"><strong>Participant</strong><br>${facilityName(sub.facilityId)}</td>
-          <td style="width:33%; vertical-align:top;"><strong>Test / Sample</strong><br>${test.name} — Sample ${round.sampleId}</td>
+          <td style="width:33%; vertical-align:top;"><strong>Test / Sample</strong><br>${(packageForRoundId(round.id)?.label ? packageForRoundId(round.id).label+' — ' : '')}${test.name} — Sample ${round.sampleId}</td>
           <td style="width:33%; vertical-align:top;"><strong>Results Deadline</strong><br>${round.deadline || '—'}</td>
         </tr>
       </table>

@@ -4,6 +4,7 @@ const { buildConsensusReport } = require('../consensus');
 const { getTestName, NOT_PERFORMED_REASONS } = require('../testDefinitions');
 const { sendFeedbackReleasedEmail, sendFollowUpQueryEmail } = require('../email');
 const { isEligibleParticipant } = require('../participation');
+const { computeStatus } = require('../roundPackageStatus');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
@@ -74,6 +75,14 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
   const deadlineDateOnly = round.deadline instanceof Date ? round.deadline.toISOString().slice(0, 10) : String(round.deadline).slice(0, 10);
   const deadlinePassed = new Date(deadlineDateOnly + 'T23:59:59') < new Date();
   if (deadlinePassed) return res.status(403).json({ error: 'This round is closed.' });
+
+  if (round.round_package_id) {
+    const { rows: pkgRows } = await pool.query('select * from round_packages where id = $1', [round.round_package_id]);
+    const pkg = pkgRows[0];
+    if (pkg && computeStatus(pkg) === 'closed') {
+      return res.status(403).json({ error: 'This round is closed.' });
+    }
+  }
 
   const { rows: existingRows } = await pool.query(
     'select * from submissions where round_id = $1 and facility_id = $2',

@@ -6,6 +6,7 @@ const authRoutes = require('./routes/auth');
 const facilityRoutes = require('./routes/facilities');
 const userRoutes = require('./routes/users');
 const roundRoutes = require('./routes/rounds');
+const roundPackageRoutes = require('./routes/roundPackages');
 const submissionRoutes = require('./routes/submissions');
 
 const app = express();
@@ -19,6 +20,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/facilities', facilityRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/rounds', roundRoutes);
+app.use('/api/round-packages', roundPackageRoutes);
 app.use('/api/rounds', submissionRoutes); // adds /:roundId/submissions... under /api/rounds
 
 // Basic error handler so unexpected errors return JSON, not an HTML crash page
