@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { buildConsensusReport } = require('../consensus');
-const { getTestName } = require('../testDefinitions');
+const { getTestName, NOT_PERFORMED_REASONS } = require('../testDefinitions');
 const { sendFeedbackReleasedEmail, sendFollowUpQueryEmail } = require('../email');
 const { isEligibleParticipant } = require('../participation');
 const { requireAuth, requireRole } = require('../middleware/auth');
@@ -118,10 +118,32 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
     }
   }
 
+  // Test Not Performed always requires one of the four approved reasons — enforced here
+  // regardless of finalize, so a draft save can't carry an incomplete not-performed field
+  // either. Any field NOT marked not-performed has its reason normalized to null server-side,
+  // so a result that's since been filled in can never keep a stale, contradictory reason.
+  const normalizedResult = {};
+  if (result && typeof result === 'object') {
+    for (const [key, raw] of Object.entries(result)) {
+      if (raw && typeof raw === 'object' && 'notPerformed' in raw) {
+        if (raw.notPerformed) {
+          if (!NOT_PERFORMED_REASONS.includes(raw.reason)) {
+            return res.status(400).json({ error: `Select a reason for "Test Not Performed" (${key}).` });
+          }
+          normalizedResult[key] = { value: null, notPerformed: true, reason: raw.reason };
+        } else {
+          normalizedResult[key] = { value: raw.value ?? null, notPerformed: false, reason: null };
+        }
+      } else {
+        normalizedResult[key] = raw;
+      }
+    }
+  }
+
   // Derive an internal reported/not_performed summary (used for consensus/statistics later) —
   // this is computed automatically, never chosen directly by the lab, and is not shown as a
   // separate sample-wide control in the UI.
-  const hasAnyRealValue = result && Object.values(result).some(v => {
+  const hasAnyRealValue = Object.values(normalizedResult).some(v => {
     if (v && typeof v === 'object') return v.value !== null && v.value !== undefined && v.value !== '' && !v.notPerformed;
     return v !== null && v !== undefined && v !== '';
   });
@@ -152,7 +174,7 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
      returning *`,
     [req.params.roundId, req.user.facilityId, dateReceived || null, methodUsed || null,
      sampleCondition || null, sampleAcceptability || null, sampleRejectionReason || null,
-     derivedResultStatus, result || {}, personnelTesting || null, personnelVerifying || null,
+     derivedResultStatus, normalizedResult, personnelTesting || null, personnelVerifying || null,
      status, submittedAt]
   );
   res.json(camel(rows[0]));

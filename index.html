@@ -595,29 +595,77 @@
 
 <script>
 /* ---------------- Test catalog ---------------- */
-const TESTS = [
-  { id:'bloodgroup', name:'Blood Grouping and Cross Match', kind:'bloodgroup' },
-  { id:'hiv', name:'HIV Serology', kind:'serology' },
-  { id:'hbsag', name:'HBsAg Serology', kind:'serology' },
-  { id:'rpr', name:'RPR Serology', kind:'serology' },
-  { id:'pregnancy', name:'Pregnancy Test', kind:'serology' },
-  { id:'fbc', name:'Full Blood Count', kind:'fbc' },
-  { id:'chem', name:'Chemistry', kind:'chem' },
-];
 const SEROLOGY_OPTIONS = ['Indeterminate','Reactive','Non-Reactive'];
-const FBC_ANALYTES = [
-  {key:'wbc', label:'WBC', unit:'x10^9/L'},
-  {key:'rbc', label:'RBC', unit:'x10^12/L'},
-  {key:'hgb', label:'Hemoglobin', unit:'g/dL'},
-  {key:'hct', label:'Hematocrit', unit:'%'},
-  {key:'plt', label:'Platelets', unit:'x10^9/L'},
+const NOT_PERFORMED_REASONS = [
+  'Reagent Out Stock',
+  'Analyser Out of Service (Maintenance and Calibration)',
+  'Analyser Breakdown',
+  'Test not Available',
 ];
-const CHEM_ANALYTES = [
-  {key:'glucose', label:'Glucose', unit:'mmol/L'},
-  {key:'urea', label:'Urea', unit:'mmol/L'},
-  {key:'creatinine', label:'Creatinine', unit:'µmol/L'},
-  {key:'sodium', label:'Sodium', unit:'mmol/L'},
-  {key:'potassium', label:'Potassium', unit:'mmol/L'},
+const TESTS = [
+  { id:'bloodgroup', name:'Blood Grouping and Cross Match', kind:'categorical', fields:[
+    {key:'abo', label:'ABO group', options:['A','B','AB','O']},
+    {key:'rhesus', label:'Rhesus', options:['Positive','Negative']},
+    {key:'saline', label:'Cross match — Saline', options:['Compatible','Incompatible']},
+    {key:'ahg', label:'Cross match — AHG', options:['Compatible','Incompatible']},
+  ]},
+  { id:'hiv', name:'HIV Serology', kind:'categorical', fields:[{key:'value', label:'Result', options:SEROLOGY_OPTIONS}] },
+  { id:'hbsag', name:'HBsAg Serology', kind:'categorical', fields:[{key:'value', label:'Result', options:SEROLOGY_OPTIONS}] },
+  { id:'rpr', name:'RPR Serology', kind:'categorical', fields:[{key:'value', label:'Result', options:SEROLOGY_OPTIONS}] },
+  { id:'pregnancy', name:'Pregnancy Test', kind:'categorical', fields:[{key:'value', label:'Result', options:SEROLOGY_OPTIONS}] },
+  { id:'mtbrif', name:'MTB Rif (GeneXpert)', kind:'categorical', fields:[
+    {key:'mtb', label:'Mycobacterium Tuberculosis', options:['MTB Not Detected','MTB Detected']},
+    {key:'rif', label:'Rifampicin Detection', options:['RIF Not Detected','RIF Detected']},
+    {key:'riflevel', label:'Rif Level', options:['N/A','Low','Medium','High']},
+  ]},
+  { id:'fbc', name:'Full Blood Count', kind:'quantitative', fields:[
+    {key:'wbc', label:'White Cell Count (WBC)', unit:'×10³/µL'},
+    {key:'rbc', label:'Red Cell Count (RBC)', unit:'×10¹²/L'},
+    {key:'hgb', label:'Haemoglobin (Hb)', unit:'g/dL'},
+    {key:'hct', label:'Haematocrit (HCT)', unit:'%'},
+    {key:'plt', label:'Platelets', unit:'×10⁹/L'},
+    {key:'mcv', label:'Mean Cell Volume (MCV)', unit:'fL'},
+    {key:'mch', label:'Mean Cell Haemoglobin (MCH)', unit:'pg'},
+    {key:'mchc', label:'Mean Cell Haemoglobin Concentration (MCHC)', unit:'g/dL'},
+    {key:'rdw', label:'Red Cell Distribution Width (RDW)', unit:'%'},
+    {key:'pdw', label:'Platelet Distribution Width (PDW)', unit:'fL'},
+    {key:'neut', label:'Neutrophils (absolute)', unit:'×10⁹/L'},
+    {key:'lymph', label:'Lymphocytes (absolute)', unit:'×10⁹/L'},
+    {key:'mono', label:'Monocytes (absolute)', unit:'×10⁹/L'},
+    {key:'eos', label:'Eosinophils (absolute)', unit:'×10⁹/L'},
+    {key:'baso', label:'Basophils (absolute)', unit:'×10⁹/L'},
+  ]},
+  { id:'chem', name:'Chemistry', kind:'quantitative', fields:[
+    {key:'amyl2', label:'Amylase (AMYL2)', unit:'U/L'},
+    {key:'ch021', label:'Cholesterol (CH021)', unit:'mmol/L'},
+    {key:'alb2', label:'Albumin (ALB2)', unit:'g/L'},
+    {key:'ure1', label:'Urea (URE1)', unit:'mmol/L'},
+    {key:'blt3', label:'Bilirubin (BLT3)', unit:'µmol/L'},
+    {key:'bld2', label:'Bilirubin – direct (BLD2)', unit:'µmol/L'},
+    {key:'trgl', label:'Triglycerides (TRGL)', unit:'mmol/L'},
+    {key:'glu2', label:'Glucose (GLU2)', unit:'mmol/L'},
+    {key:'tp2m', label:'Total Protein (TP2M)', unit:'g/L'},
+    {key:'ua2', label:'Uric Acid (UA2)', unit:'mg/dL'},
+    {key:'cre1', label:'Creatinine (CRE1)', unit:'µmol/L'},
+    {key:'alt1', label:'ALT (ALT1)', unit:'U/L'},
+    {key:'astl', label:'AST (ASTL)', unit:'U/L'},
+    {key:'alp', label:'Alkaline Phosphatase (ALP)', unit:'U/L'},
+    {key:'na', label:'Sodium (Na)', unit:'mmol/L'},
+    {key:'k', label:'Potassium (K)', unit:'mmol/L'},
+    {key:'cl', label:'Chloride (Cl)', unit:'mmol/L'},
+    {key:'hco3', label:'Bicarbonate (HCO₃⁻)', unit:'mmol/L'},
+    {key:'ca', label:'Calcium (Ca)', unit:'mmol/L'},
+    {key:'po4', label:'Phosphate (PO₄)', unit:'mmol/L'},
+    {key:'mg', label:'Magnesium (Mg)', unit:'mmol/L'},
+    {key:'ggt', label:'Gamma-GT (GGT)', unit:'U/L'},
+    {key:'ldh', label:'Lactate Dehydrogenase (LDH)', unit:'U/L'},
+    {key:'ck', label:'Creatine Kinase (CK)', unit:'U/L'},
+    {key:'iron', label:'Iron', unit:'µmol/L'},
+    {key:'ferritin', label:'Ferritin', unit:'µg/L'},
+  ]},
+  { id:'cd4', name:'CD4', kind:'quantitative', fields:[
+    {key:'cd4', label:'CD4+ (T Helper)', unit:'Counts/µL'},
+  ]},
 ];
 function testById(id){ return TESTS.find(t=>t.id===id); }
 
@@ -1461,34 +1509,36 @@ async function renderFeedbackSubmissions(roundId){
     });
   });
 }
-// Reads a field's stored value tolerantly — supports both the new { value, notPerformed }
-// shape and older flat values from submissions saved before this per-analyte redesign.
+// Reads a field's stored value tolerantly — supports both the new { value, notPerformed, reason }
+// shape and older flat/partial values from submissions saved before this redesign.
 function fieldState(existing, key){
   const v = existing ? existing[key] : undefined;
   if(v && typeof v === 'object' && ('value' in v || 'notPerformed' in v)){
-    return { value: v.value ?? '', notPerformed: !!v.notPerformed };
+    return { value: v.value ?? '', notPerformed: !!v.notPerformed, reason: v.reason || '' };
   }
-  return { value: v ?? '', notPerformed: false };
+  return { value: v ?? '', notPerformed: false, reason: '' };
 }
-function notPerformedRow(key, controlHtml, notPerformed){
-  return `<div class="field-row" style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
-    <div style="flex:1;">${controlHtml}</div>
-    <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; margin:0;">
-      <input type="checkbox" class="not-performed-cb" data-field="${key}" ${notPerformed?'checked':''} style="width:auto; margin:0;"><span>Test Not Performed</span>
-    </label>
+function notPerformedRow(key, controlHtml, notPerformed, reason){
+  return `<div class="field-row" style="display:flex; align-items:flex-start; gap:12px; margin-bottom:10px; flex-wrap:wrap;">
+    <div style="flex:1; min-width:180px;">${controlHtml}</div>
+    <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
+      <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; margin:0;">
+        <input type="checkbox" class="not-performed-cb" data-field="${key}" ${notPerformed?'checked':''} style="width:auto; margin:0;"><span>Test Not Performed</span>
+      </label>
+      <select class="np-reason-select" data-field="${key}" style="${notPerformed?'':'display:none;'} margin:0;">
+        <option value="">Select reason *</option>
+        ${NOT_PERFORMED_REASONS.map(r=>`<option ${reason===r?'selected':''}>${r}</option>`).join('')}
+      </select>
+    </div>
   </div>`;
 }
 function formatResultSummary(testId, result){
   const t = testById(testId);
-  const line = (key, label, unit) => {
-    const fs = fieldState(result, key);
-    return `${label}: ${fs.notPerformed ? 'Test Not Performed' : (fs.value || '—') + (unit && fs.value ? ' '+unit : '')}`;
-  };
-  if(t.kind==='bloodgroup') return [line('abo','ABO'), line('rhesus','Rh'), line('saline','Saline XM'), line('ahg','AHG XM')].join(' · ');
-  if(t.kind==='serology') return line('value','Result');
-  if(t.kind==='fbc') return FBC_ANALYTES.map(a=>line(a.key, a.label, a.unit)).join(' · ');
-  if(t.kind==='chem') return CHEM_ANALYTES.map(a=>line(a.key, a.label, a.unit)).join(' · ');
-  return '';
+  return t.fields.map(f=>{
+    const fs = fieldState(result, f.key);
+    if(fs.notPerformed) return `${f.label}: Test Not Performed (${fs.reason || 'no reason recorded'})`;
+    return `${f.label}: ${fs.value || '—'}${f.unit && fs.value ? ' '+f.unit : ''}`;
+  }).join(' · ');
 }
 
 /* ---------------- USER: Active Rounds ---------------- */
@@ -1526,57 +1576,59 @@ function renderRounds(){
 function dynamicFieldsHtml(testId, existing){
   const t = testById(testId);
   existing = existing || {};
-  if(t.kind==='bloodgroup'){
-    const fields = [
-      ['abo','ABO group',['A','B','AB','O']],
-      ['rhesus','Rhesus',['Positive','Negative']],
-      ['saline','Cross match — Saline',['Compatible','Incompatible']],
-      ['ahg','Cross match — AHG',['Compatible','Incompatible']],
-    ];
-    return fields.map(([key,label,options])=>{
-      const fs = fieldState(existing, key);
-      const control = `<label>${label}</label><select id="rf_${key}" ${fs.notPerformed?'disabled':''}><option value="">Select</option>${options.map(v=>`<option ${fs.value===v?'selected':''}>${v}</option>`).join('')}</select>`;
-      return notPerformedRow(key, control, fs.notPerformed);
-    }).join('');
-  }
-  if(t.kind==='serology'){
-    const fs = fieldState(existing, 'value');
-    const control = `<label>Result</label><select id="rf_value" ${fs.notPerformed?'disabled':''}><option value="">Select</option>${SEROLOGY_OPTIONS.map(v=>`<option ${fs.value===v?'selected':''}>${v}</option>`).join('')}</select>`;
-    return notPerformedRow('value', control, fs.notPerformed);
-  }
-  if(t.kind==='fbc' || t.kind==='chem'){
-    const analytes = t.kind==='fbc' ? FBC_ANALYTES : CHEM_ANALYTES;
-    return analytes.map(a=>{
-      const fs = fieldState(existing, a.key);
-      const control = `<label>${a.label} (${a.unit})</label><input type="number" step="any" class="mono" id="rf_${a.key}" value="${fs.value}" ${fs.notPerformed?'disabled':''}>`;
-      return notPerformedRow(a.key, control, fs.notPerformed);
-    }).join('');
-  }
-  return '';
+  return t.fields.map(f=>{
+    const fs = fieldState(existing, f.key);
+    let control;
+    if(f.options){
+      control = `<label>${f.label}</label><select id="rf_${f.key}" ${fs.notPerformed?'disabled':''}><option value="">Select</option>${f.options.map(v=>`<option ${fs.value===v?'selected':''}>${v}</option>`).join('')}</select>`;
+    } else {
+      control = `<label>${f.label} (${f.unit})</label><input type="number" step="any" class="mono" id="rf_${f.key}" value="${fs.value}" ${fs.notPerformed?'disabled':''}>`;
+    }
+    return notPerformedRow(f.key, control, fs.notPerformed, fs.reason);
+  }).join('');
 }
 function collectResult(testId){
   const t = testById(testId);
   const fieldObj = (key) => {
     const cb = document.querySelector(`.not-performed-cb[data-field="${key}"]`);
     const notPerformed = cb ? cb.checked : false;
+    const reasonSel = document.querySelector(`.np-reason-select[data-field="${key}"]`);
+    const reason = notPerformed ? (reasonSel ? reasonSel.value : '') : null;
     const raw = val('rf_'+key);
-    return { value: notPerformed ? null : (raw===''?null:raw), notPerformed };
+    return { value: notPerformed ? null : (raw===''?null:raw), notPerformed, reason };
   };
-  if(t.kind==='bloodgroup'){
-    return { abo: fieldObj('abo'), rhesus: fieldObj('rhesus'), saline: fieldObj('saline'), ahg: fieldObj('ahg') };
-  }
-  if(t.kind==='serology'){ return { value: fieldObj('value') }; }
-  if(t.kind==='fbc'){ const o={}; FBC_ANALYTES.forEach(a=>o[a.key]=fieldObj(a.key)); return o; }
-  if(t.kind==='chem'){ const o={}; CHEM_ANALYTES.forEach(a=>o[a.key]=fieldObj(a.key)); return o; }
-  return {};
+  const o = {};
+  t.fields.forEach(f=>o[f.key]=fieldObj(f.key));
+  return o;
 }
 function val(id){ const el = document.getElementById(id); return el ? el.value : ''; }
+// Returns a list of { key, label } for every field currently marked Test Not Performed
+// without a reason selected — used to block save/submit until all are resolved.
+function missingNotPerformedReasons(testId){
+  const t = testById(testId);
+  const missing = [];
+  t.fields.forEach(f=>{
+    const cb = document.querySelector(`.not-performed-cb[data-field="${f.key}"]`);
+    if(cb && cb.checked){
+      const reasonSel = document.querySelector(`.np-reason-select[data-field="${f.key}"]`);
+      if(!reasonSel || !reasonSel.value) missing.push(f.label);
+    }
+  });
+  return missing;
+}
 function wireNotPerformedCheckboxes(){
   document.querySelectorAll('.not-performed-cb').forEach(cb=>{
     const control = document.getElementById('rf_'+cb.dataset.field);
+    const reasonSel = document.querySelector(`.np-reason-select[data-field="${cb.dataset.field}"]`);
     if(control) control.disabled = cb.checked;
+    if(reasonSel) reasonSel.style.display = cb.checked ? '' : 'none';
     cb.addEventListener('change', ()=>{
       if(control){ control.disabled = cb.checked; if(cb.checked) control.value=''; }
+      if(reasonSel){
+        reasonSel.style.display = cb.checked ? '' : 'none';
+        // Clearing the result back to "performed" must not leave a stale reason behind.
+        if(!cb.checked) reasonSel.value = '';
+      }
     });
   });
 }
@@ -1641,6 +1693,14 @@ async function saveEntry(finalize){
   const sampleAcceptability = document.getElementById('sampleAccepted').checked ? 'accepted'
     : document.getElementById('sampleRejected').checked ? 'rejected' : null;
   const sampleRejectionReason = val('sampleRejectionReason');
+
+  if(sampleAcceptability !== 'rejected'){
+    const missing = missingNotPerformedReasons(round.testId);
+    if(missing.length){
+      showToast(`Select a reason for "Test Not Performed": ${missing.join(', ')}`);
+      return;
+    }
+  }
 
   if(finalize){
     if(!personnelTesting || !personnelVerifying){
@@ -1738,21 +1798,10 @@ async function renderMyFeedback(){
   });
 }
 function analyteMeta(testId){
-  const t = testById(testId);
-  if(t.kind==='bloodgroup') return [
-    {key:'abo', label:'ABO group', unit:''},
-    {key:'rhesus', label:'Rhesus', unit:''},
-    {key:'saline', label:'Cross match — Saline', unit:''},
-    {key:'ahg', label:'Cross match — AHG', unit:''},
-  ];
-  if(t.kind==='serology') return [{key:'value', label:'Result', unit:''}];
-  if(t.kind==='fbc') return FBC_ANALYTES;
-  if(t.kind==='chem') return CHEM_ANALYTES;
-  return [];
+  return testById(testId).fields;
 }
 function isQuantitativeTest(testId){
-  const t = testById(testId);
-  return t.kind==='fbc' || t.kind==='chem';
+  return testById(testId).kind==='quantitative';
 }
 function round2(n){ return (typeof n==='number' && isFinite(n)) ? Math.round(n*100)/100 : n; }
 function gradeLabel(status){
