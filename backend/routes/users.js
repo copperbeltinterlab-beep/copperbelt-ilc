@@ -192,17 +192,36 @@ router.patch('/:id/suspend', requireAuth, requireRole('superadmin', 'facilityadm
 
 // PATCH /api/users/:id/role — upgrade/downgrade a user's role (and facility, if relevant)
 // Super Admin only.
-router.patch('/:id/role', requireAuth, requireRole('superadmin'), async (req, res) => {
-  const { role, facilityId } = req.body;
-  if (!['superadmin', 'facilityadmin', 'user'].includes(role)) {
-    return res.status(400).json({ error: 'Invalid role.' });
-  }
-  if (role !== 'superadmin' && !facilityId) {
-    return res.status(400).json({ error: 'A facility is required for this role.' });
-  }
+router.patch('/:id/role', requireAuth, requireRole('superadmin', 'facilityadmin'), async (req, res) => {
+  let { role, facilityId } = req.body;
   if (Number(req.params.id) === req.user.id) {
     return res.status(403).json({ error: 'You cannot change your own role.' });
   }
+
+  const { rows: existingRows } = await pool.query('select * from users where id = $1', [req.params.id]);
+  const target = existingRows[0];
+  if (!target) return res.status(404).json({ error: 'User not found.' });
+
+  if (req.user.role === 'facilityadmin') {
+    // A Facility Admin may only reassign between Facility User and Facility Admin, only for
+    // someone already at their own facility, and can never grant Super Admin or move anyone
+    // to a different facility — that stays a Super Admin-only power.
+    if (target.facility_id !== req.user.facilityId) {
+      return res.status(403).json({ error: 'You can only manage users at your own facility.' });
+    }
+    if (!['user', 'facilityadmin'].includes(role)) {
+      return res.status(403).json({ error: 'Facility Admins can only assign the Facility User or Facility Admin role.' });
+    }
+    facilityId = req.user.facilityId;
+  } else {
+    if (!['superadmin', 'facilityadmin', 'user'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role.' });
+    }
+    if (role !== 'superadmin' && !facilityId) {
+      return res.status(400).json({ error: 'A facility is required for this role.' });
+    }
+  }
+
   if (role === 'facilityadmin') {
     const count = await facilityAdminCount(facilityId, Number(req.params.id));
     if (count >= MAX_FACILITY_ADMINS) {
@@ -210,12 +229,39 @@ router.patch('/:id/role', requireAuth, requireRole('superadmin'), async (req, re
     }
   }
 
-  const { rows: existingRows } = await pool.query('select * from users where id = $1', [req.params.id]);
-  if (!existingRows[0]) return res.status(404).json({ error: 'User not found.' });
-
   const { rows } = await pool.query(
     'update users set role = $1, facility_id = $2 where id = $3 returning *',
     [role, role === 'superadmin' ? null : facilityId, req.params.id]
+  );
+  res.json(publicUser(rows[0]));
+});
+
+// PATCH /api/users/:id/details — edit a user's name/username/email. Super Admin can edit
+// anyone; Facility Admin only users at their own facility (which, since Super Admins have no
+// facility_id, naturally excludes Super Admin accounts entirely).
+router.patch('/:id/details', requireAuth, requireRole('superadmin', 'facilityadmin'), async (req, res) => {
+  const { name, username, email } = req.body;
+  if (!name || !username || !email) {
+    return res.status(400).json({ error: 'Name, username and email are required.' });
+  }
+
+  const { rows: existingRows } = await pool.query('select * from users where id = $1', [req.params.id]);
+  const target = existingRows[0];
+  if (!target) return res.status(404).json({ error: 'User not found.' });
+
+  if (req.user.role === 'facilityadmin' && target.facility_id !== req.user.facilityId) {
+    return res.status(403).json({ error: 'You can only manage users at your own facility.' });
+  }
+
+  const { rows: dupe } = await pool.query(
+    'select id from users where (username = $1 or email = $2) and id != $3',
+    [username, email, req.params.id]
+  );
+  if (dupe.length) return res.status(409).json({ error: 'That username or email is already in use.' });
+
+  const { rows } = await pool.query(
+    'update users set name = $1, username = $2, email = $3 where id = $4 returning *',
+    [name, username, email, req.params.id]
   );
   res.json(publicUser(rows[0]));
 });

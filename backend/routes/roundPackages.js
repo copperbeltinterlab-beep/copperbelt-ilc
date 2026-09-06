@@ -4,6 +4,8 @@ const pool = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { isEligibleParticipant } = require('../participation');
 const { computeStatus, toDateOnly } = require('../roundPackageStatus');
+const { buildConsensusReport } = require('../consensus');
+const { sendDeletionRequestEmail } = require('../email');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB cap
@@ -34,6 +36,9 @@ function camel(p, samples) {
     status: computeStatus(p),
     closedAt: p.closed_at || null,
     closedBy: p.closed_by || null,
+    deletionRequestedBy: p.deletion_requested_by || null,
+    deletionRequestedAt: p.deletion_requested_at || null,
+    deletionRequestReason: p.deletion_request_reason || null,
     createdAt: p.created_at,
     createdBy: p.created_by || null,
     samples: (samples || []).map(s => ({
@@ -274,6 +279,15 @@ router.patch('/:id', requireAuth, requireRole('facilityadmin', 'superadmin'), up
 
 // POST /api/round-packages/:id/close — move a package from Active to Closed. All samples,
 // results, participants, instructions, feedback and history are preserved untouched.
+//
+// Item 4: for any submission nobody has evaluated yet (feedback is still null), this also
+// auto-runs consensus for its round right now. buildConsensusReport already marks a field
+// "not_evaluated" whenever fewer than 3 facilities reported it (insufficientData) — closing
+// a round is the natural point to lock that in, since no more results are coming. This never
+// touches a submission a Facility Admin has already verified/authorized — auto-evaluation
+// only fills in what was never looked at, so a round closing with no results in doesn't
+// leave data hanging in fields that already were graded, and it never overrides admin
+// judgement.
 router.post('/:id/close', requireAuth, requireRole('facilityadmin', 'superadmin'), async (req, res) => {
   const pkg = await getPackage(req.params.id);
   if (!pkg) return res.status(404).json({ error: 'Round not found.' });
@@ -284,7 +298,35 @@ router.post('/:id/close', requireAuth, requireRole('facilityadmin', 'superadmin'
     `update round_packages set status = 'closed', closed_at = now(), closed_by = $1 where id = $2 returning *`,
     [req.user.id, pkg.id]
   );
-  res.json(camel(rows[0], await getSamples(pkg.id)));
+
+  const children = await getSamples(pkg.id);
+  for (const round of children) {
+    const { rows: subRows } = await pool.query('select * from submissions where round_id = $1', [round.id]);
+    const submissions = subRows.map(s => ({
+      id: s.id, facilityId: s.facility_id, result: s.result, sampleAcceptability: s.sample_acceptability,
+    }));
+    if (submissions.length === 0) continue;
+    const report = buildConsensusReport(round.test_id, submissions);
+    if (report.error) continue;
+    for (const entry of report.perSubmission) {
+      const { rows: current } = await pool.query('select feedback from submissions where id = $1', [entry.submissionId]);
+      if (current[0] && current[0].feedback) continue; // already evaluated by a human — never override
+      const feedback = {
+        status: entry.overall,
+        comment: entry.comment,
+        fields: entry.fields || {},
+        fieldStats: report.fieldStats,
+        verifiedBy: 'System (round closed automatically)',
+        verifiedAt: new Date().toISOString(),
+        authorizedBy: null,
+        authorizedAt: null,
+        released: false,
+      };
+      await pool.query('update submissions set feedback = $1 where id = $2', [feedback, entry.submissionId]);
+    }
+  }
+
+  res.json(camel(rows[0], children));
 });
 
 // POST /api/round-packages/:id/reopen — admin error-recovery valve. Not destructive: no data
@@ -303,24 +345,58 @@ router.post('/:id/reopen', requireAuth, requireRole('facilityadmin', 'superadmin
   res.json(camel(rows[0], await getSamples(pkg.id)));
 });
 
-// DELETE /api/round-packages/:id — only rounds with zero submissions anywhere in the package
-// (draft or final) may be deleted outright, so no in-progress facility work ever vanishes.
-// Anything with real activity should be closed instead, which preserves the full record.
-router.delete('/:id', requireAuth, requireRole('facilityadmin', 'superadmin'), async (req, res) => {
+// POST /api/round-packages/:id/request-deletion — Facility Admin can no longer delete a round
+// directly; this instead notifies every active Super Admin so they can review and act.
+router.post('/:id/request-deletion', requireAuth, requireRole('facilityadmin'), async (req, res) => {
   const pkg = await getPackage(req.params.id);
   if (!pkg) return res.status(404).json({ error: 'Round not found.' });
-  if (req.user.role === 'facilityadmin' && pkg.providing_facility_id !== req.user.facilityId) {
+  if (pkg.providing_facility_id !== req.user.facilityId) {
     return res.status(403).json({ error: 'This round belongs to another facility.' });
   }
-  const children = await getSamples(pkg.id);
-  const childIds = children.map(r => r.id);
+  const reason = (req.body.reason || '').trim();
+  if (!reason) return res.status(400).json({ error: 'A reason is required to request deletion.' });
+
+  const { rows } = await pool.query(
+    `update round_packages set deletion_requested_by = $1, deletion_requested_at = now(), deletion_request_reason = $2
+     where id = $3 returning *`,
+    [req.user.id, reason, pkg.id]
+  );
+
+  const { rows: admins } = await pool.query(
+    `select email from users where role = 'superadmin' and status = 'active' and email is not null`
+  );
+  const { rows: facRows } = await pool.query('select name from facilities where id = $1', [req.user.facilityId]);
+  const facilityName = facRows[0] ? facRows[0].name : 'Unknown facility';
+  await Promise.all(admins.map(a => sendDeletionRequestEmail({
+    to: a.email, requesterName: req.user.name, facilityName, roundLabel: packageLabel(pkg), reason,
+  })));
+
+  res.json(camel(rows[0], await getSamples(pkg.id)));
+});
+
+// POST /api/round-packages/:id/dismiss-deletion-request — Super Admin declines a pending
+// request without deleting the round.
+router.post('/:id/dismiss-deletion-request', requireAuth, requireRole('superadmin'), async (req, res) => {
+  const pkg = await getPackage(req.params.id);
+  if (!pkg) return res.status(404).json({ error: 'Round not found.' });
+  const { rows } = await pool.query(
+    `update round_packages set deletion_requested_by = null, deletion_requested_at = null, deletion_request_reason = null
+     where id = $1 returning *`,
+    [pkg.id]
+  );
+  res.json(camel(rows[0], await getSamples(pkg.id)));
+});
+
+// DELETE /api/round-packages/:id — Super Admin only. Unlike before, this is allowed even when
+// labs have already submitted results — that's now a deliberate Super Admin power, not
+// something a Facility Admin can trigger (they can only request-deletion, above). Deletes any
+// submissions on this round's samples first so the foreign key never blocks the cleanup.
+router.delete('/:id', requireAuth, requireRole('superadmin'), async (req, res) => {
+  const pkg = await getPackage(req.params.id);
+  if (!pkg) return res.status(404).json({ error: 'Round not found.' });
+  const childIds = (await getSamples(pkg.id)).map(r => r.id);
   if (childIds.length) {
-    const { rows: subs } = await pool.query('select id from submissions where round_id = any($1::int[])', [childIds]);
-    if (subs.length) {
-      return res.status(409).json({
-        error: 'This round has submitted or in-progress results and cannot be deleted. Close it instead to preserve the record.',
-      });
-    }
+    await pool.query('delete from submissions where round_id = any($1::int[])', [childIds]);
   }
   await pool.query('delete from rounds where round_package_id = $1', [pkg.id]);
   await pool.query('delete from round_packages where id = $1', [pkg.id]);

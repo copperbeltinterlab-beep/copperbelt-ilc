@@ -75,9 +75,22 @@ async function sendFollowUpQueryEmail({ to, personnelName, facilityName, message
   });
 }
 
+async function sendDeletionRequestEmail({ to, requesterName, facilityName, roundLabel, reason }) {
+  await sendMail({
+    to,
+    subject: `Round deletion requested — ${roundLabel}`,
+    html: `${brandHeader()}
+      <p><strong>${requesterName}</strong> (${facilityName}) has requested deletion of <strong>${roundLabel}</strong>.</p>
+      ${reason ? `<p><strong>Reason given:</strong></p><p style="white-space:pre-wrap; border-left:3px solid #ddd; padding-left:12px;">${reason}</p>` : ''}
+      <p>Only a Super Admin can delete a round. Log in to review and act on this request.</p>
+      <p><a href="${APP_URL}" style="background:#0d3b30;color:#fff;padding:10px 18px;text-decoration:none;border-radius:6px;">Review in Copperbelt ILC</a></p>`,
+  });
+}
+
 module.exports = {
   sendActivationEmail,
   sendPasswordResetEmail,
   sendFeedbackReleasedEmail,
   sendFollowUpQueryEmail,
+  sendDeletionRequestEmail,
 };

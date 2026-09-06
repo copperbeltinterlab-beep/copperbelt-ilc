@@ -40,6 +40,7 @@
   label{display:block; font-size:12px; color:var(--muted); margin:13px 0 6px; font-weight:500;}
   label:first-child{margin-top:0;}
   input, select, textarea{width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:9px; font-size:14px; font-family:'Inter',sans-serif; background:var(--paper); color:var(--ink);}
+  input[type=radio], input[type=checkbox]{width:16px; height:16px; padding:0; border-radius:0; margin:0; accent-color:var(--teal); vertical-align:middle; flex-shrink:0;}
   textarea{resize:vertical; min-height:64px;}
   input:focus, select:focus, textarea:focus, button:focus-visible{outline:2px solid var(--gold); outline-offset:1px;}
   input.mono{font-family:'IBM Plex Mono',monospace;}
@@ -511,9 +512,9 @@
           <label>Attach instructions file *</label>
           <input type="file" id="newRoundInstructionsFile">
           <label>Participating facilities</label>
-          <div style="display:flex; gap:14px; align-items:center; margin:4px 0;">
-            <label style="display:inline-flex; align-items:center; gap:4px; font-weight:normal;"><input type="radio" name="participationMode" id="participationAll" value="all" checked style="width:auto;"> All facilities</label>
-            <label style="display:inline-flex; align-items:center; gap:4px; font-weight:normal;"><input type="radio" name="participationMode" id="participationSelected" value="selected" style="width:auto;"> Select individual laboratories</label>
+          <div style="display:flex; gap:20px; align-items:center; margin:6px 0 8px;">
+            <label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal; margin:0;"><input type="radio" name="participationMode" id="participationAll" value="all" checked> All facilities</label>
+            <label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal; margin:0;"><input type="radio" name="participationMode" id="participationSelected" value="selected"> Select individual laboratories</label>
           </div>
           <div id="participantFacilityList" style="display:none; max-height:160px; overflow:auto; border:1px solid #ccc; border-radius:6px; padding:8px; margin-bottom:8px;"></div>
           <button class="primary" id="addRoundBtn">Create round(s)</button>
@@ -580,8 +581,8 @@
 
           <label>Sample acceptability *</label>
           <div style="display:flex; gap:24px; align-items:center; margin-bottom:12px;">
-            <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="sampleAcceptability" value="accepted" id="sampleAccepted" style="width:auto; margin:0;"><span>Accepted</span></label>
-            <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="sampleAcceptability" value="rejected" id="sampleRejected" style="width:auto; margin:0;"><span>Rejected</span></label>
+            <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="sampleAcceptability" value="accepted" id="sampleAccepted"><span>Accepted</span></label>
+            <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="sampleAcceptability" value="rejected" id="sampleRejected"><span>Rejected</span></label>
           </div>
           <div id="rejectionReasonWrap" style="display:none;">
             <label>Reason for rejection *</label>
@@ -1046,6 +1047,7 @@ function renderAccess(){
         </select>
         <button class="secondary small save-role" data-id="${u.id}">Save role</button>
         `}
+        <button class="secondary small edit-details-admin" data-id="${u.id}">Edit details</button>
         ${(u.status==='pending_activation'||u.status==='activation_expired') ? `<button class="secondary small resend-activation" data-id="${u.id}">Resend activation</button><button class="secondary small enable-bypass" data-id="${u.id}">Enable via bypass</button>` : ''}
         ${u.status==='bypass_pending' ? '' : `<button class="secondary small toggle-active" data-id="${u.id}">${u.active===false ? 'Enable' : 'Disable'}</button>`}
         ${u.id===session.userId ? '' : `<button class="secondary small delete-user" data-id="${u.id}">Delete</button>`}
@@ -1076,6 +1078,24 @@ function renderAccess(){
         u.role = updated.role; u.facilityId = updated.facilityId;
         showToast('Role updated.');
         FACILITY_ADMIN_COUNTS = await api('/users/facility-admin-counts');
+        renderAccess();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+  el.querySelectorAll('.edit-details-admin').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const u = USERS.find(x=>x.id===Number(btn.dataset.id));
+      const name = prompt('Full name:', u.name);
+      if(name===null) return;
+      const username = prompt('Username:', u.username);
+      if(username===null) return;
+      const email = prompt('Email:', u.email);
+      if(email===null) return;
+      if(!name.trim() || !username.trim() || !email.trim()){ showToast('All fields are required.'); return; }
+      try{
+        const updated = await api(`/users/${u.id}/details`, { method:'PATCH', body:{ name: name.trim(), username: username.trim(), email: email.trim() } });
+        Object.assign(u, updated);
+        showToast('User details updated.');
         renderAccess();
       }catch(e){ showToast(e.message); }
     });
@@ -1157,17 +1177,55 @@ function statusBadge(u){
 }
 function renderFacUsers(){
   const el = document.getElementById('facUsersList');
-  const mine = USERS.filter(u=>u.facilityId===session.facilityId && u.role==='user');
+  const mine = USERS.filter(u=>u.facilityId===session.facilityId && u.role!=='superadmin');
   if(mine.length===0){ el.innerHTML = '<div class="empty">No users added yet.</div>'; return; }
   el.innerHTML = mine.map(u=>`
     <div class="row-item" style="flex-wrap:wrap; gap:8px;">
-      <div><strong>${u.name}</strong><div class="meta">${statusBadge(u)}</div></div>
-      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+      <div><strong>${u.name}</strong><div class="meta">${roleLabel(u.role)} · ${statusBadge(u)}</div></div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+        ${u.id===session.userId ? '' : `
+        <select class="fac-role-select" data-id="${u.id}" style="width:auto; margin:0;">
+          <option value="user" ${u.role==='user'?'selected':''}>Facility User</option>
+          <option value="facilityadmin" ${u.role==='facilityadmin'?'selected':''}>Facility Admin</option>
+        </select>
+        <button class="secondary small fac-save-role" data-id="${u.id}">Save role</button>
+        `}
+        <button class="secondary small fac-edit-details" data-id="${u.id}">Edit details</button>
         ${(u.status==='pending_activation'||u.status==='activation_expired') ? `<button class="secondary small resend-activation" data-id="${u.id}">Resend activation</button>` : ''}
         <button class="secondary small toggle-active" data-id="${u.id}">${u.active===false ? 'Enable' : 'Disable'}</button>
-        <button class="secondary small delete-user" data-id="${u.id}">Delete</button>
+        ${u.id===session.userId ? '' : `<button class="secondary small delete-user" data-id="${u.id}">Delete</button>`}
       </div>
     </div>`).join('');
+  el.querySelectorAll('.fac-save-role').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const u = USERS.find(x=>x.id===Number(btn.dataset.id));
+      const sel = el.querySelector(`.fac-role-select[data-id="${btn.dataset.id}"]`);
+      try{
+        const updated = await api(`/users/${u.id}/role`, { method:'PATCH', body:{ role: sel.value } });
+        Object.assign(u, updated);
+        showToast('Role updated.');
+        renderFacUsers();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+  el.querySelectorAll('.fac-edit-details').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const u = USERS.find(x=>x.id===Number(btn.dataset.id));
+      const name = prompt('Full name:', u.name);
+      if(name===null) return;
+      const username = prompt('Username:', u.username);
+      if(username===null) return;
+      const email = prompt('Email:', u.email);
+      if(email===null) return;
+      if(!name.trim() || !username.trim() || !email.trim()){ showToast('All fields are required.'); return; }
+      try{
+        const updated = await api(`/users/${u.id}/details`, { method:'PATCH', body:{ name: name.trim(), username: username.trim(), email: email.trim() } });
+        Object.assign(u, updated);
+        showToast('User details updated.');
+        renderFacUsers();
+      }catch(e){ showToast(e.message); }
+    });
+  });
   el.querySelectorAll('.toggle-active').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const u = USERS.find(x=>x.id===Number(btn.dataset.id));
@@ -1277,6 +1335,7 @@ function renderProvide(){
         <div class="meta">Participating: ${participationLabel(p)}</div>
         ${p.instructionsFileName ? `<div class="meta"><a href="#" class="download-pkg-instructions" data-id="${p.id}" data-filename="${p.instructionsFileName}">📎 ${p.instructionsFileName}</a></div>` : ''}
         ${p.status==='closed' ? `<div class="meta">Closed ${p.closedAt ? new Date(p.closedAt).toLocaleDateString() : ''}</div>` : ''}
+        ${p.deletionRequestedAt ? `<div class="meta" style="color:#8a1f1f;">Deletion requested ${new Date(p.deletionRequestedAt).toLocaleDateString()} — awaiting Super Admin</div>` : ''}
       </div>
       <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
         ${p.status==='active' ? `
@@ -1286,7 +1345,7 @@ function renderProvide(){
         ` : `
           <button class="secondary small pkg-reopen" data-id="${p.id}">Reopen</button>
         `}
-        <button class="secondary small pkg-delete" data-id="${p.id}">Delete</button>
+        ${p.deletionRequestedAt ? '' : `<button class="secondary small pkg-request-delete" data-id="${p.id}">Request deletion</button>`}
       </div>
     </div>`).join('');
 
@@ -1348,13 +1407,15 @@ function renderProvide(){
       }catch(e){ showToast(e.message); }
     });
   });
-  el.querySelectorAll('.pkg-delete').forEach(btn=>{
+  el.querySelectorAll('.pkg-request-delete').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      if(!confirm('Delete this round permanently? This only works if no results have been entered for any of its samples. If in doubt, close it instead.')) return;
+      const reason = prompt('Reason for requesting deletion of this round (sent to the Super Admin for review):');
+      if(!reason || !reason.trim()){ showToast('A reason is required.'); return; }
       try{
-        await api(`/round-packages/${btn.dataset.id}`, { method:'DELETE' });
-        showToast('Round deleted.');
-        PACKAGES = PACKAGES.filter(p=>String(p.id)!==String(btn.dataset.id));
+        const updated = await api(`/round-packages/${btn.dataset.id}/request-deletion`, { method:'POST', body:{ reason: reason.trim() } });
+        const p = packageById(btn.dataset.id);
+        Object.assign(p, updated);
+        showToast('Deletion requested — the Super Admin has been notified.');
         renderProvide();
       }catch(e){ showToast(e.message); }
     });
@@ -1397,7 +1458,7 @@ function renderParticipantFacilityList(){
   const wrap = document.getElementById('participantFacilityList');
   wrap.innerHTML = FACILITIES.map(f=>`
     <label style="display:block; font-weight:normal; margin:2px 0;">
-      <input type="checkbox" class="participant-facility-cb" value="${f.id}" style="width:auto; margin-right:6px;">${f.name}
+      <input type="checkbox" class="participant-facility-cb" value="${f.id}" style="margin-right:6px;">${f.name}
     </label>`).join('');
 }
 document.getElementById('participationAll').addEventListener('change', ()=>{
@@ -1474,6 +1535,7 @@ function renderAllRounds(){
         <div class="meta">Participating: ${participationLabel(p)}</div>
         ${p.instructionsFileName ? `<div class="meta"><a href="#" class="download-pkg-instructions-admin" data-id="${p.id}" data-filename="${p.instructionsFileName}">📎 ${p.instructionsFileName}</a></div>` : ''}
         ${p.status==='closed' ? `<div class="meta">Closed ${p.closedAt ? new Date(p.closedAt).toLocaleDateString() : ''}</div>` : ''}
+        ${p.deletionRequestedAt ? `<div class="meta" style="color:#8a1f1f; font-weight:600;">Deletion requested by ${(USERS.find(u=>u.id===p.deletionRequestedBy)||{}).name || '#'+p.deletionRequestedBy} on ${new Date(p.deletionRequestedAt).toLocaleDateString()}${p.deletionRequestReason ? ' — '+p.deletionRequestReason : ''}</div>` : ''}
       </div>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         ${p.status==='active' ? `
@@ -1482,6 +1544,7 @@ function renderAllRounds(){
         ` : `
           <button class="secondary small pkg-reopen-admin" data-id="${p.id}">Reopen</button>
         `}
+        ${p.deletionRequestedAt ? `<button class="secondary small pkg-dismiss-delete-admin" data-id="${p.id}">Dismiss request</button>` : ''}
         <button class="secondary small pkg-delete-admin" data-id="${p.id}">Delete</button>
       </div>
     </div>`).join('');
@@ -1529,9 +1592,21 @@ function renderAllRounds(){
       }catch(e){ showToast(e.message); }
     });
   });
+  el.querySelectorAll('.pkg-dismiss-delete-admin').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      try{
+        const updated = await api(`/round-packages/${btn.dataset.id}/dismiss-deletion-request`, { method:'POST' });
+        const p = packageById(btn.dataset.id);
+        Object.assign(p, updated);
+        showToast('Deletion request dismissed.');
+        renderAllRounds();
+      }catch(e){ showToast(e.message); }
+    });
+  });
   el.querySelectorAll('.pkg-delete-admin').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      if(!confirm('Delete this round permanently? This only works if no results have been entered for any of its samples. If in doubt, close it instead.')) return;
+      const p = packageById(btn.dataset.id);
+      if(!confirm(`Permanently delete ${p.label} — ${testById(p.testId).name}? This removes ALL samples, submitted results and feedback in this round, even if labs have already submitted. This cannot be undone.`)) return;
       try{
         await api(`/round-packages/${btn.dataset.id}`, { method:'DELETE' });
         showToast('Round deleted.');
@@ -1681,7 +1756,7 @@ function notPerformedRow(key, controlHtml, notPerformed, reason){
     <div style="flex:1; min-width:180px;">${controlHtml}</div>
     <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
       <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; margin:0;">
-        <input type="checkbox" class="not-performed-cb" data-field="${key}" ${notPerformed?'checked':''} style="width:auto; margin:0;"><span>Test Not Performed</span>
+        <input type="checkbox" class="not-performed-cb" data-field="${key}" ${notPerformed?'checked':''}><span>Test Not Performed</span>
       </label>
       <select class="np-reason-select" data-field="${key}" style="${notPerformed?'':'display:none;'} margin:0;">
         <option value="">Select reason *</option>
