@@ -84,9 +84,10 @@
 
   #printArea{display:none;}
   @media print{
+    @page{ size: landscape; margin: 12mm; }
     body *{visibility:hidden;}
     #printArea, #printArea *{visibility:visible;}
-    #printArea{display:block; position:absolute; top:0; left:0; width:100%; padding:30px;}
+    #printArea{display:block; position:absolute; top:0; left:0; width:100%; padding:10px; font-size:10pt;}
   }
 
 
@@ -1924,23 +1925,41 @@ async function renderMyFeedback(){
     .map(sub => ({ round: ROUNDS.find(r=>String(r.id)===String(sub.roundId)), sub }))
     .filter(r => r.round);
   if(rows.length===0){ el.innerHTML = '<div class="empty">No submitted results yet.</div>'; return; }
-  el.innerHTML = rows.map(({round,sub})=>{
-    const fb = sub.feedback;
-    const status = fb?.status || 'not_evaluated';
-    const cls = status==='acceptable' ? 'ok' : status==='unacceptable' ? 'alert' : 'neutral';
-    const label = status==='acceptable' ? 'Acceptable' : status==='unacceptable' ? 'Unacceptable' : 'Not Evaluated';
-    const pkg = packageForRoundId(round.id);
+
+  // Group by parent round package so one package (possibly several samples) prints as one report.
+  const groups = {};
+  rows.forEach(r=>{
+    const pkg = packageForRoundId(r.round.id);
+    const key = pkg ? pkg.id : ('unpackaged-'+r.round.id);
+    (groups[key] = groups[key] || { pkg, items: [] }).items.push(r);
+  });
+
+  el.innerHTML = Object.values(groups).map(({pkg, items})=>{
+    const test = testById(items[0].round.testId);
+    const sampleChips = items.map(({round, sub})=>{
+      const fb = sub.feedback;
+      const status = fb ? fb.status : 'pending';
+      const cls = status==='acceptable' ? 'ok' : status==='unacceptable' ? 'alert' : 'neutral';
+      const label = status==='acceptable' ? 'Acceptable' : status==='unacceptable' ? 'Unacceptable'
+        : status==='not_evaluated' ? 'Not Evaluated' : 'Pending release';
+      return `<span class="flag ${cls}" style="margin:2px 4px 2px 0; display:inline-block;">Sample ${round.sampleId}: ${label}</span>`;
+    }).join('');
+    const queryLinks = items.map(({round,sub})=>
+      `<button class="secondary small query-fb" data-round="${round.id}" data-sub="${sub.id}">Query Sample ${round.sampleId}</button>`
+    ).join(' ');
     return `
       <div class="card">
-        <div class="row-item" style="border:none; padding-top:0;">
-          <div><strong>${pkg ? pkg.label+' — ' : ''}${testById(round.testId).name}</strong><div class="meta">SAMPLE ${round.sampleId} · submitted ${new Date(sub.submittedAt).toLocaleDateString()}</div></div>
-          <span class="flag ${cls}">${label}</span>
+        <div class="row-item" style="border:none; padding-top:0; flex-wrap:wrap;">
+          <div><strong>${pkg ? pkg.label+' — ' : ''}${test.name}</strong><div class="meta">${items.length} sample${items.length===1?'':'s'} submitted</div></div>
         </div>
-        ${fb?.comment ? `<div class="meta" style="margin:6px 0 4px;">Comment: ${fb.comment}</div>` : ''}
-        <button class="secondary small print-fb" data-round="${round.id}" data-sub="${sub.id}">Print / download feedback</button>
-        <button class="secondary small query-fb" data-round="${round.id}" data-sub="${sub.id}">Send a follow-up query</button>
+        <div style="margin:6px 0;">${sampleChips}</div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
+          <button class="secondary small print-fb-pkg" data-key="${pkg ? pkg.id : ('unpackaged-'+items[0].round.id)}">Print / download feedback</button>
+          ${queryLinks}
+        </div>
       </div>`;
   }).join('');
+
   el.querySelectorAll('.query-fb').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const roundId = btn.dataset.round, subId = btn.dataset.sub;
@@ -1957,11 +1976,10 @@ async function renderMyFeedback(){
       }
     });
   });
-  el.querySelectorAll('.print-fb').forEach(btn=>{
+  el.querySelectorAll('.print-fb-pkg').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      const roundId = btn.dataset.round, subId = btn.dataset.sub;
-      const {round, sub} = rows.find(r=>String(r.round.id)===roundId && String(r.sub.id)===subId);
-      printFeedback(round, sub);
+      const group = groups[btn.dataset.key];
+      printFeedbackPackage(group.pkg, group.items);
     });
   });
 }
@@ -1978,130 +1996,169 @@ function gradeLabel(status){
   if(status==='not_performed') return 'NP';
   return 'NE';
 }
-function printFeedback(round, sub){
-  const fb = sub.feedback || {status:'not_evaluated'};
-  const status = fb.status==='acceptable' ? 'ACCEPTABLE' : fb.status==='unacceptable' ? 'UNACCEPTABLE' : 'NOT EVALUATED';
-  const test = testById(round.testId);
-  const meta = analyteMeta(round.testId);
-  const quant = isQuantitativeTest(round.testId);
-  const hasFieldData = !!(fb.fields && fb.fieldStats);
-
-  let tableRows = '';
-  if(hasFieldData){
-    if(quant){
-      tableRows = meta.map(a=>{
-        const fs = fieldState(sub.result, a.key);
-        const stat = fb.fieldStats[a.key] || {};
-        const fEval = fb.fields[a.key] || {};
-        const resultText = fs.notPerformed ? 'Not Performed' : (fs.value!=null && fs.value!=='' ? `${fs.value}${a.unit?' '+a.unit:''}` : '—');
-        let mean='—', sd='—', range='—', sdi='—';
-        if(stat && !stat.insufficientData && typeof stat.mean==='number'){
-          mean = round2(stat.mean); sd = round2(stat.sd);
-          range = `${round2(stat.mean - 2*stat.sd)} – ${round2(stat.mean + 2*stat.sd)}`;
+function acceptabilityCell(status){
+  const map = {
+    acceptable: {label:'Acceptable', bg:'#d7f2df', fg:'#0d3b30'},
+    unacceptable: {label:'Unacceptable', bg:'#fbd7d7', fg:'#7a1414'},
+    not_evaluated: {label:'Not Evaluated', bg:'#fff3c4', fg:'#7a5b00'},
+    not_performed: {label:'Not Performed', bg:'#fff3c4', fg:'#7a5b00'},
+    pending: {label:'Pending release', bg:'#fff3c4', fg:'#7a5b00'},
+  };
+  const m = map[status] || map.not_evaluated;
+  return `<td style="text-align:center; background:${m.bg}; color:${m.fg}; font-weight:600;">${m.label}</td>`;
+}
+// One table per analyte field, one row per sample — matches the qualitative report template
+// exactly, including the separate ABO / Rhesus / Saline / AHG tables for Blood Grouping,
+// which fall out naturally here since each is just another field in that test's field list.
+function qualitativeFieldTable(field, items){
+  const rowsHtml = items.map(({round, sub})=>{
+    const fb = sub.feedback;
+    const fs = fieldState(sub.result, field.key);
+    const resultText = fs.notPerformed ? 'Test Not Performed' : (fs.value || '—');
+    let acceptableResult = '—', noOfLabs = '—', consensusText = '—', status = 'pending';
+    if(fb && fb.fieldStats && fb.fields){
+      const stat = fb.fieldStats[field.key] || {};
+      const fEval = fb.fields[field.key] || {};
+      status = fEval.status || 'not_evaluated';
+      if(!stat.insufficientData){
+        noOfLabs = (typeof stat.n === 'number') ? stat.n : '—';
+        acceptableResult = stat.tie ? 'No consensus' : (stat.consensusValue || '—');
+        if(stat.counts){
+          const total = Object.values(stat.counts).reduce((a,b)=>a+b,0) || 1;
+          consensusText = Object.entries(stat.counts).map(([val,c])=>`${val} – ${Math.round(c/total*100)}%`).join(', ');
         }
-        if(fEval && typeof fEval.sdi==='number'){ sdi = fEval.sdi===Infinity ? '∞' : fEval.sdi.toFixed(2); }
-        const grade = gradeLabel(fEval.status);
-        const n = (stat && typeof stat.n==='number') ? stat.n : '—';
-        return `<tr>
-          <td>${a.label}</td>
-          <td>${resultText}</td>
-          <td style="text-align:center;">${grade}</td>
-          <td style="text-align:center;">${n}</td>
-          <td style="text-align:center;">${mean}</td>
-          <td style="text-align:center;">${sd}</td>
-          <td style="text-align:center;">${sdi}</td>
-          <td style="text-align:center;">${range}</td>
-          <td>Peer Group Mean ± 2 SD</td>
-        </tr>`;
-      }).join('');
-    } else {
-      tableRows = meta.map(a=>{
-        const fs = fieldState(sub.result, a.key);
-        const stat = fb.fieldStats[a.key] || {};
-        const fEval = fb.fields[a.key] || {};
-        const resultText = fs.notPerformed ? 'Not Performed' : (fs.value || '—');
-        let consensus='—', agreement='—';
-        if(stat && !stat.insufficientData){
-          consensus = stat.tie ? 'No consensus' : (stat.consensusValue || '—');
-          agreement = (typeof stat.percentAgreement==='number') ? `${stat.percentAgreement}%` : '—';
-        }
-        const grade = gradeLabel(fEval.status);
-        const n = (stat && typeof stat.n==='number') ? stat.n : '—';
-        return `<tr>
-          <td>${a.label}</td>
-          <td>${resultText}</td>
-          <td style="text-align:center;">${grade}</td>
-          <td style="text-align:center;">${n}</td>
-          <td style="text-align:center;">${consensus}</td>
-          <td style="text-align:center;">${agreement}</td>
-          <td>Majority Consensus</td>
-        </tr>`;
-      }).join('');
+      } else {
+        consensusText = 'Insufficient data (fewer than 3 labs)';
+      }
     }
-  }
-
-  const headerCols = !hasFieldData ? '' : (quant
-    ? `<tr><th>Analyte</th><th>Result</th><th>Grade</th><th>Peer Group N</th><th>Mean</th><th>SD</th><th>SDI</th><th>Acceptable Range</th><th>Evaluation Criteria</th></tr>`
-    : `<tr><th>Analyte</th><th>Result</th><th>Grade</th><th>Peer Group N</th><th>Consensus</th><th>% Agreement</th><th>Evaluation Criteria</th></tr>`);
-
-  const acceptedText = sub.sampleAcceptability === 'rejected' ? 'No' : (sub.sampleAcceptability === 'accepted' ? 'Yes' : '—');
+    return `<tr>
+      <td>${round.sampleId}</td>
+      <td>${resultText}</td>
+      <td style="text-align:center;">${acceptableResult}</td>
+      <td style="text-align:center;">${noOfLabs}</td>
+      <td>${consensusText}</td>
+      ${acceptabilityCell(status)}
+    </tr>`;
+  }).join('');
+  return `<div class="fieldset-title" style="margin:14px 0 4px; font-size:10pt;">${field.label}</div>
+    <table style="width:100%; border-collapse:collapse; margin-bottom:6px; font-size:10pt;" border="1">
+      <thead><tr><th>Sample ID</th><th>Your Result</th><th>Acceptable Result</th><th>No of Labs</th><th>Consensus</th><th>Acceptability</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>`;
+}
+// Quantitative tests keep the existing Mean/SD/SDI table design (untouched), just repeated
+// once per sample within the same combined package report.
+function quantitativeSampleSection(round, sub, testDef){
+  const fb = sub.feedback || {};
+  const hasFieldData = !!(fb.fields && fb.fieldStats);
+  const rowsHtml = testDef.fields.map(a=>{
+    const fs = fieldState(sub.result, a.key);
+    const resultText = fs.notPerformed ? 'Not Performed' : (fs.value!=null && fs.value!=='' ? `${fs.value}${a.unit?' '+a.unit:''}` : '—');
+    let mean='—', sd='—', range='—', sdi='—', grade='Pending', n='—';
+    if(hasFieldData){
+      const stat = fb.fieldStats[a.key] || {};
+      const fEval = fb.fields[a.key] || {};
+      if(stat && !stat.insufficientData && typeof stat.mean==='number'){
+        mean = round2(stat.mean); sd = round2(stat.sd);
+        range = `${round2(stat.mean - 2*stat.sd)} – ${round2(stat.mean + 2*stat.sd)}`;
+      }
+      if(fEval && typeof fEval.sdi==='number'){ sdi = fEval.sdi===Infinity ? '∞' : fEval.sdi.toFixed(2); }
+      grade = gradeLabel(fEval.status);
+      n = (stat && typeof stat.n==='number') ? stat.n : '—';
+    }
+    return `<tr><td>${a.label}</td><td>${resultText}</td><td style="text-align:center;">${grade}</td><td style="text-align:center;">${n}</td><td style="text-align:center;">${mean}</td><td style="text-align:center;">${sd}</td><td style="text-align:center;">${sdi}</td><td style="text-align:center;">${range}</td><td>Peer Group Mean ± 2 SD</td></tr>`;
+  }).join('');
+  return `<div class="fieldset-title" style="margin:14px 0 4px; font-size:10pt;">Sample ${round.sampleId}</div>
+    <table style="width:100%; border-collapse:collapse; margin-bottom:6px; font-size:10pt;" border="1">
+      <thead><tr><th>Analyte</th><th>Result</th><th>Grade</th><th>Peer Group N</th><th>Mean</th><th>SD</th><th>SDI</th><th>Acceptable Range</th><th>Evaluation Criteria</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>`;
+}
+// One Performance Report per round package, covering every sample this facility submitted
+// in that round. Landscape + 10pt uniform font is enforced by the @media print CSS.
+function printFeedbackPackage(pkg, items){
+  const testDef = testById(items[0].round.testId);
+  const quant = testDef.kind === 'quantitative';
+  const deadline = pkg ? pkg.deadline : items[0].round.deadline;
+  const label = pkg ? pkg.label : '';
+  const allReleased = items.every(({sub})=>sub.feedback && sub.feedback.released);
   const coatOfArmsSrc = (document.getElementById('headerCoatOfArms') || {}).src || '';
 
+  const resultsHtml = quant
+    ? items.map(({round,sub})=>quantitativeSampleSection(round, sub, testDef)).join('')
+    : testDef.fields.map(f=>qualitativeFieldTable(f, items)).join('');
+
+  const sampleConditionRows = items.map(({round,sub})=>{
+    const cond = sub.sampleAcceptability==='rejected'
+      ? 'Rejected' + (sub.sampleRejectionReason ? ': '+sub.sampleRejectionReason : '')
+      : (sub.sampleAcceptability==='accepted' ? 'Accepted' : '—');
+    return `<tr>
+      <td>${round.sampleId}</td>
+      <td>${sub.dateReceived || '—'}</td>
+      <td>${cond}${sub.sampleCondition ? ' — '+sub.sampleCondition : ''}</td>
+      <td>${sub.methodUsed || '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const statusSummary = items.map(({round,sub})=>{
+    const fb = sub.feedback;
+    const s = fb ? fb.status : 'pending';
+    const l = s==='acceptable' ? 'Acceptable' : s==='unacceptable' ? 'Unacceptable' : s==='not_evaluated' ? 'Not Evaluated' : 'Pending release';
+    return `Sample ${round.sampleId}: ${l}`;
+  }).join(' · ');
+
+  const commentsHtml = items.filter(({sub})=>sub.feedback && sub.feedback.comment)
+    .map(({round,sub})=>`<div style="font-size:10pt; margin-bottom:4px; white-space:pre-line;"><strong>Sample ${round.sampleId} comment:</strong> ${sub.feedback.comment}</div>`)
+    .join('');
+
+  const signedFeedback = items.map(i=>i.sub.feedback).find(f=>f && f.verifiedBy);
+
   document.getElementById('printArea').innerHTML = `
-    <div style="font-family:Arial,sans-serif; color:#12211F; font-size:13px;">
+    <div style="font-family:Arial,sans-serif; color:#12211F; font-size:10pt;">
       <table style="width:100%; border-collapse:collapse; margin-bottom:8px;">
         <tr>
           <td style="vertical-align:middle; width:56px;">${coatOfArmsSrc ? `<img src="${coatOfArmsSrc}" style="height:44px; width:auto;">` : ''}</td>
           <td style="vertical-align:middle;">
-            <div style="font-weight:bold; font-size:15px;">Ministry of Health, Zambia</div>
-            <div style="font-size:12px; color:#555;">Copperbelt Province Interlaboratory Comparison Programme</div>
+            <div style="font-weight:bold; font-size:13pt;">Ministry of Health, Zambia</div>
+            <div style="font-size:10pt; color:#555;">Copperbelt Province Interlaboratory Comparison Programme</div>
           </td>
-          <td style="text-align:right; vertical-align:middle; font-size:11px; color:#555;">
+          <td style="text-align:right; vertical-align:middle; font-size:10pt; color:#555;">
             Print date: ${new Date().toLocaleDateString()}<br>
-            Status: ${fb.released ? 'FINAL' : 'DRAFT'}
+            Status: ${allReleased ? 'FINAL' : 'DRAFT'}
           </td>
         </tr>
       </table>
-      <h2 style="margin:6px 0 10px; border-bottom:2px solid #12211F; padding-bottom:6px;">Performance Report</h2>
+      <h2 style="margin:6px 0 10px; border-bottom:2px solid #12211F; padding-bottom:6px; font-size:13pt;">Performance Report</h2>
 
-      <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:12px;">
+      <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:10pt;">
         <tr>
-          <td style="width:33%; vertical-align:top;"><strong>Participant</strong><br>${facilityName(sub.facilityId)}</td>
-          <td style="width:33%; vertical-align:top;"><strong>Test / Sample</strong><br>${(packageForRoundId(round.id)?.label ? packageForRoundId(round.id).label+' — ' : '')}${test.name} — Sample ${round.sampleId}</td>
-          <td style="width:33%; vertical-align:top;"><strong>Results Deadline</strong><br>${round.deadline || '—'}</td>
+          <td style="width:33%; vertical-align:top;"><strong>Participant</strong><br>${facilityName(items[0].sub.facilityId)}</td>
+          <td style="width:33%; vertical-align:top;"><strong>Round / Test</strong><br>${label ? label+' — ' : ''}${testDef.name}</td>
+          <td style="width:33%; vertical-align:top;"><strong>Results Deadline</strong><br>${deadline || '—'}</td>
         </tr>
       </table>
 
-      <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:12px; border:1px solid #ccc;">
-        <tr style="background:#f2f2f2;"><td colspan="2" style="padding:4px 6px;"><strong>Sample Conditions</strong></td></tr>
-        <tr><td style="padding:4px 6px; width:50%;">Date sample received</td><td style="padding:4px 6px;">${sub.dateReceived || '—'}</td></tr>
-        <tr><td style="padding:4px 6px;">Received in good condition?</td><td style="padding:4px 6px;">${acceptedText}${sub.sampleAcceptability==='rejected' && sub.sampleRejectionReason ? ' — '+sub.sampleRejectionReason : ''}</td></tr>
-        <tr><td style="padding:4px 6px;">Comments</td><td style="padding:4px 6px;">${sub.sampleCondition || '—'}</td></tr>
-        <tr><td style="padding:4px 6px;">Method / Instrument</td><td style="padding:4px 6px;">${sub.methodUsed || '—'}</td></tr>
+      <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:10pt; border:1px solid #ccc;">
+        <tr style="background:#f2f2f2;"><th style="padding:4px 6px; text-align:left;">Sample</th><th style="padding:4px 6px; text-align:left;">Date Received</th><th style="padding:4px 6px; text-align:left;">Condition</th><th style="padding:4px 6px; text-align:left;">Method / Instrument</th></tr>
+        ${sampleConditionRows}
       </table>
 
-      ${hasFieldData ? `
-      <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:11px;" border="1">
-        <thead>${headerCols}</thead>
-        <tbody>${tableRows}</tbody>
-      </table>` : `
-      <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:12px; border:1px solid #ccc;">
-        <tr><td style="padding:6px;"><strong>Submitted result:</strong> ${formatResultSummary(round.testId, sub.result)}</td></tr>
-      </table>`}
+      ${resultsHtml}
 
-      <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:13px;">
-        <tr><td><strong>Overall Result Status:</strong> ${status}</td></tr>
-        ${fb.comment ? `<tr><td style="padding-top:4px; white-space:pre-line;"><strong>Evaluator comment:</strong>\n${fb.comment}</td></tr>` : ''}
+      <table style="width:100%; border-collapse:collapse; margin:10px 0; font-size:10pt;">
+        <tr><td><strong>Overall Result Status:</strong> ${statusSummary}</td></tr>
       </table>
+      ${commentsHtml}
 
-      <p style="margin:14px 0 2px; font-size:12px;">Reviewed by: ${fb.verifiedBy || '—'}</p>
-      ${fb.authorizedBy ? `<p style="margin:0; font-size:12px;">Authorized by: ${fb.authorizedBy} on ${new Date(fb.authorizedAt).toLocaleDateString()}</p>` : ''}
+      <p style="margin:14px 0 2px; font-size:8pt;">Reviewed by: ${signedFeedback ? signedFeedback.verifiedBy : '—'}</p>
+      ${signedFeedback && signedFeedback.authorizedBy ? `<p style="margin:0; font-size:8pt;">Authorized by: ${signedFeedback.authorizedBy} on ${new Date(signedFeedback.authorizedAt).toLocaleDateString()}</p>` : ''}
 
       <hr style="margin-top:16px;">
-      <p style="font-size:10px; color:#777;">Report prepared by the Copperbelt Province Interlaboratory Comparison Programme, Ministry of Health, Zambia.</p>
+      <p style="font-size:8pt; color:#777;">Report prepared by the Copperbelt Province Interlaboratory Comparison Programme, Ministry of Health, Zambia.</p>
     </div>`;
   window.print();
 }
+
 
 /* ---------------- Forgot / Activate / Reset password ---------------- */
 function showAuthCard(id){
