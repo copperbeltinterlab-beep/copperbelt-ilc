@@ -5,7 +5,8 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { isEligibleParticipant } = require('../participation');
 const { computeStatus, toDateOnly } = require('../roundPackageStatus');
 const { buildConsensusReport } = require('../consensus');
-const { sendDeletionRequestEmail } = require('../email');
+const { getTestName } = require('../testDefinitions');
+const { sendDeletionRequestEmail, sendFeedbackReleasedEmail } = require('../email');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB cap
@@ -84,6 +85,33 @@ router.get('/:id/instructions-file', requireAuth, async (req, res) => {
   res.setHeader('Content-Type', pkg.instructions_file_type || 'application/octet-stream');
   res.setHeader('Content-Disposition', `attachment; filename="${pkg.instructions_file_name || 'instructions'}"`);
   res.send(buffer);
+});
+
+function camelSubmission(s) {
+  return {
+    id: s.id, roundId: s.round_id, facilityId: s.facility_id,
+    dateReceived: s.date_received, methodUsed: s.method_used, sampleCondition: s.sample_condition,
+    sampleAcceptability: s.sample_acceptability, sampleRejectionReason: s.sample_rejection_reason,
+    result: s.result, personnelTesting: s.personnel_testing, personnelVerifying: s.personnel_verifying,
+    status: s.status, submittedAt: s.submitted_at, feedback: s.feedback,
+  };
+}
+
+// GET /api/round-packages/:id/submissions/mine — a Facility User's own draft/submission for
+// EVERY sample in this package, in one call. Powers the multi-sample entry screen: enter
+// Sample A, move straight to Sample B/C/D without returning to the round list, per-sample
+// data kept fully independent.
+router.get('/:id/submissions/mine', requireAuth, requireRole('user'), async (req, res) => {
+  const samples = await getSamples(req.params.id);
+  const sampleIds = samples.map(s => s.id);
+  if (sampleIds.length === 0) return res.json({});
+  const { rows } = await pool.query(
+    'select * from submissions where round_id = any($1::int[]) and facility_id = $2',
+    [sampleIds, req.user.facilityId]
+  );
+  const byRoundId = {};
+  rows.forEach(s => { byRoundId[s.round_id] = camelSubmission(s); });
+  res.json(byRoundId);
 });
 
 // POST /api/round-packages — Facility Admin creates a round package: one test, an ILC
@@ -275,6 +303,54 @@ router.patch('/:id', requireAuth, requireRole('facilityadmin', 'superadmin'), up
   const freshPkg = await getPackage(pkg.id);
   const samples = await getSamples(pkg.id);
   res.json(camel(freshPkg, samples));
+});
+
+// POST /api/round-packages/:id/authorize-all — authorize & release every eligible submission
+// across every sample in this package in one action, instead of one sample/facility at a
+// time. "Eligible" preserves the existing dual sign-off rule: the submission must already be
+// verified, not yet authorized, and verified by someone OTHER than the person clicking this
+// (the same admin still can't both verify and authorize). Anything not eligible is skipped,
+// not treated as an error, and the response says exactly how many were done vs skipped.
+router.post('/:id/authorize-all', requireAuth, requireRole('facilityadmin', 'superadmin'), async (req, res) => {
+  const pkg = await getPackage(req.params.id);
+  if (!pkg) return res.status(404).json({ error: 'Round not found.' });
+  if (req.user.role === 'facilityadmin' && pkg.providing_facility_id !== req.user.facilityId) {
+    return res.status(403).json({ error: 'This round belongs to another facility.' });
+  }
+
+  const children = await getSamples(pkg.id);
+  let authorizedCount = 0;
+  let skippedNotVerified = 0;
+  let skippedSamePerson = 0;
+
+  for (const round of children) {
+    const { rows: subRows } = await pool.query('select * from submissions where round_id = $1', [round.id]);
+    const label = `${getTestName(round.test_id)} — Sample ${round.sample_id}`;
+    for (const sub of subRows) {
+      const fb = sub.feedback;
+      if (!fb || !fb.verifiedBy || fb.released) { if (!fb || !fb.verifiedBy) skippedNotVerified++; continue; }
+      if (fb.verifiedBy === req.user.name) { skippedSamePerson++; continue; }
+
+      const newFeedback = { ...fb, authorizedBy: req.user.name, authorizedAt: new Date().toISOString(), released: true };
+      await pool.query('update submissions set feedback = $1 where id = $2', [newFeedback, sub.id]);
+      authorizedCount++;
+
+      try {
+        const { rows: recipientRows } = await pool.query(
+          `select name, email from users where facility_id = $1 and role = 'user' and status = 'active' and email is not null`,
+          [sub.facility_id]
+        );
+        await Promise.all(recipientRows.map(u => sendFeedbackReleasedEmail({ to: u.email, name: u.name, roundLabel: label })));
+      } catch (e) {
+        console.error('Failed to send feedback-released notification:', e.message);
+      }
+    }
+  }
+
+  const parts = [`${authorizedCount} result(s) authorized and released.`];
+  if (skippedNotVerified) parts.push(`${skippedNotVerified} skipped (not yet verified).`);
+  if (skippedSamePerson) parts.push(`${skippedSamePerson} skipped (you verified those yourself — a different admin must authorize them).`);
+  res.json({ message: parts.join(' '), authorizedCount, skippedNotVerified, skippedSamePerson });
 });
 
 // POST /api/round-packages/:id/close — move a package from Active to Closed. All samples,

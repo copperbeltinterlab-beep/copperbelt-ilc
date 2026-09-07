@@ -266,6 +266,7 @@
   }
 
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head>
 <body>
 
@@ -556,6 +557,11 @@
         <div id="consensusStats" style="margin-top:12px;"></div>
         <div id="consensusNotSubmitted" style="margin-top:8px;"></div>
       </div>
+      <div class="card" id="bulkAuthorizePanel" style="display:none;">
+        <h3 class="subsection" style="margin-top:0;">Authorize & release — whole round</h3>
+        <div class="note">Authorizes and releases every already-verified result for every sample and every participating facility in this round, in one action. Only verified-but-unreleased results are affected — anything not yet verified, or verified by you (a different admin must authorize), is skipped and reported.</div>
+        <button class="primary" id="authorizeAllBtn">Authorize & release all for this round</button>
+      </div>
       <div id="feedbackSubmissionsList"></div>
     </section>
 
@@ -566,45 +572,38 @@
     </section>
 
     <section class="tab-panel" id="tab-submit">
-      <h2 class="section">Submit result</h2>
+      <h2 class="section">Enter results</h2>
       <div id="noRoundNotice" class="empty" style="display:none;">Pick a round in Active Rounds first.</div>
       <div id="submitFormWrap" style="display:none;">
-        <div class="card" id="roundInfoCard"></div>
+        <div class="card" id="packageInfoCard"></div>
+
+        <div class="card" id="sharedConditionsCard">
+          <h3 class="fieldset-title" style="margin-top:0;">Sample Conditions</h3>
+          <div class="note" style="margin-bottom:10px;">If every sample in this round was received together in the same condition, fill this in once and apply it to all of them below. You can still adjust any individual sample afterwards if it genuinely differs.</div>
+          <div class="row2">
+            <div><label>Date sample received</label><input type="date" id="sharedDateReceived"></div>
+            <div><label>Kit / method used</label><input type="text" id="sharedMethodUsed" placeholder="e.g. Manual determination"></div>
+          </div>
+          <label>Notes on sample condition</label>
+          <textarea id="sharedSampleCondition" placeholder="e.g. Correct sample transportation temperature, no leakages observed"></textarea>
+          <label>Sample acceptability</label>
+          <div style="display:flex; gap:24px; align-items:center; margin-bottom:8px;">
+            <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="sharedSampleAcceptability" value="accepted" id="sharedAccepted"><span>Accepted</span></label>
+            <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="sharedSampleAcceptability" value="rejected" id="sharedRejected"><span>Rejected</span></label>
+          </div>
+          <div id="sharedRejectionReasonWrap" style="display:none;">
+            <label>Reason for rejection</label>
+            <textarea id="sharedSampleRejectionReason" placeholder="e.g. Sample leaked in transit, received outside stability window"></textarea>
+          </div>
+          <button class="secondary small" id="applyConditionsToAllBtn">Apply to all samples below</button>
+        </div>
+
+        <div id="samplePanelsWrap"></div>
+
         <div class="card">
-          <h3 class="fieldset-title" style="margin-top:0;">Sample receipt</h3>
-          <div class="row2">
-            <div><label>Date sample received *</label><input type="date" id="dateReceived"></div>
-            <div><label>Kit / method used *</label><input type="text" id="methodUsed" placeholder="Required"></div>
-          </div>
-          <label>Notes on sample condition *</label>
-          <textarea id="sampleCondition" placeholder="e.g. Correct sample transportation temperature, no leakages observed"></textarea>
-
-          <label>Sample acceptability *</label>
-          <div style="display:flex; gap:24px; align-items:center; margin-bottom:12px;">
-            <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="sampleAcceptability" value="accepted" id="sampleAccepted"><span>Accepted</span></label>
-            <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="sampleAcceptability" value="rejected" id="sampleRejected"><span>Rejected</span></label>
-          </div>
-          <div id="rejectionReasonWrap" style="display:none;">
-            <label>Reason for rejection *</label>
-            <textarea id="sampleRejectionReason" placeholder="e.g. Sample leaked in transit, received outside stability window"></textarea>
-          </div>
-
-          <div id="resultSectionWrap">
-            <h3 class="fieldset-title">Result</h3>
-            <div id="dynamicResultFieldsWrap">
-              <div id="dynamicResultFields"></div>
-            </div>
-          </div>
-
-          <h3 class="fieldset-title">Personnel</h3>
-          <div class="row2">
-            <div><label>Tested by *</label><input type="text" id="personnelTesting" placeholder="Name of analyst"></div>
-            <div><label>Verified by *</label><input type="text" id="personnelVerifying" placeholder="Name of verifier"></div>
-          </div>
-
           <div class="btn-row">
-            <button class="secondary" id="saveExitBtn">Save & exit</button>
-            <button class="primary" id="submitFinalBtn">Submit final result</button>
+            <button class="secondary" id="saveAllDraftBtn">Save all as draft</button>
+            <button class="primary" id="submitAllBtn">Submit all results</button>
           </div>
         </div>
       </div>
@@ -720,7 +719,6 @@ async function api(path, { method = 'GET', body } = {}) {
 
 let FACILITIES = [], USERS = [], ROUNDS = [], PACKAGES = [];
 let session = null;
-let selectedRoundId = null;
 
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -1635,6 +1633,7 @@ async function renderFeedbackAdmin(){
   if(mine.length===0){
     sel.innerHTML = '<option value="">No rounds yet</option>';
     document.getElementById('consensusPanel').style.display = 'none';
+    document.getElementById('bulkAuthorizePanel').style.display = 'none';
     document.getElementById('feedbackSubmissionsList').innerHTML = '<div class="empty">Create a round first.</div>';
     return;
   }
@@ -1644,13 +1643,31 @@ async function renderFeedbackAdmin(){
     <optgroup label="${p.label} — ${testById(p.testId).name}">
       ${p.samples.map(s=>`<option value="${s.id}">Sample ${s.sampleId}</option>`).join('')}
     </optgroup>`).join('') || mine.map(r=>`<option value="${r.id}">${testById(r.testId).name} — ${r.sampleId}</option>`).join('');
+  const updateBulkPanel = ()=>{
+    const pkg = packageForRoundId(sel.value);
+    document.getElementById('bulkAuthorizePanel').style.display = pkg ? 'block' : 'none';
+    document.getElementById('authorizeAllBtn').dataset.packageId = pkg ? pkg.id : '';
+  };
   sel.onchange = ()=>{
     document.getElementById('consensusStats').innerHTML = '';
     document.getElementById('consensusNotSubmitted').innerHTML = '';
+    updateBulkPanel();
     renderFeedbackSubmissions(sel.value);
   };
+  updateBulkPanel();
   renderFeedbackSubmissions(sel.value);
 }
+document.getElementById('authorizeAllBtn').addEventListener('click', async ()=>{
+  const pkgId = document.getElementById('authorizeAllBtn').dataset.packageId;
+  if(!pkgId) return;
+  const pkg = packageById(pkgId);
+  if(!confirm(`Authorize and release every verified result across all ${pkg.samples.length} sample(s) and every participating facility in ${pkg.label} — ${testById(pkg.testId).name}? This cannot be undone.`)) return;
+  try{
+    const { message } = await api(`/round-packages/${pkgId}/authorize-all`, { method:'POST' });
+    showToast(message);
+    renderFeedbackSubmissions(document.getElementById('feedbackRoundSelect').value);
+  }catch(e){ showToast(e.message); }
+});
 
 function renderConsensusStats(fieldStats, notSubmitted){
   const rows = Object.entries(fieldStats).map(([key, s])=>{
@@ -1744,6 +1761,43 @@ async function renderFeedbackSubmissions(roundId){
     });
   });
 }
+/* ---------------- USER: Active Rounds ---------------- */
+let MY_SUBMISSION_STATUS = {}; // roundId -> 'submitted' | 'draft'
+let selectedPackageId = null;
+let MY_PACKAGE_SUBMISSIONS = {}; // roundId -> submission, for the currently open package
+function renderRounds(){
+  const el = document.getElementById('roundsList');
+  // PACKAGES is already filtered server-side for this Facility User: active only, and only
+  // packages their facility is eligible to participate in.
+  if(PACKAGES.length===0){ el.innerHTML = '<div class="empty">No active rounds right now.</div>'; return; }
+  el.innerHTML = '';
+  PACKAGES.forEach(p=>{
+    const c = countdownInfo(p.deadline);
+    const submittedCount = p.samples.filter(s=>MY_SUBMISSION_STATUS[s.id]==='submitted').length;
+    const div = document.createElement('div');
+    div.className = 'card round-card' + (String(p.id)===String(selectedPackageId) ? ' selected' : '');
+    div.innerHTML = `
+      <div class="row-item" style="border:none; padding:0; flex-wrap:wrap; gap:6px;">
+        <div>
+          <strong>${p.label} — ${testById(p.testId).name} — ${p.samples.length} Sample${p.samples.length===1?'':'s'}</strong>
+          <div class="meta">provided by ${facilityName(p.providingFacilityId)}</div>
+          <div class="countdown ${c.cls}">${c.status==='closed' ? (c.text==='No deadline set' ? c.text : 'Closed') : c.text}</div>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <span class="badge" style="background:${submittedCount===p.samples.length?'#e3f3ea':'#fff3c4'};color:${submittedCount===p.samples.length?'#0d3b30':'#7a5b00'};">${submittedCount}/${p.samples.length} submitted</span>
+          <span class="badge ${c.cls}">${c.status==='closed' ? 'Closed' : c.label}</span>
+        </div>
+      </div>`;
+    div.addEventListener('click', ()=>{
+      selectedPackageId = p.id;
+      setActiveTab('submit');
+      renderSubmit();
+    });
+    el.appendChild(div);
+  });
+}
+
+/* ---------------- USER: Submit Result (multi-sample, one package at a time) ---------------- */
 // Reads a field's stored value tolerantly — supports both the new { value, notPerformed, reason }
 // shape and older flat/partial values from submissions saved before this redesign.
 function fieldState(existing, key){
@@ -1775,49 +1829,6 @@ function formatResultSummary(testId, result){
     return `${f.label}: ${fs.value || '—'}${f.unit && fs.value ? ' '+f.unit : ''}`;
   }).join(' · ');
 }
-
-/* ---------------- USER: Active Rounds ---------------- */
-let MY_SUBMISSION_STATUS = {}; // roundId -> 'submitted' | 'draft'
-function renderRounds(){
-  const el = document.getElementById('roundsList');
-  // PACKAGES is already filtered server-side for this Facility User: active only, and only
-  // packages their facility is eligible to participate in.
-  if(PACKAGES.length===0){ el.innerHTML = '<div class="empty">No active rounds right now.</div>'; return; }
-  el.innerHTML = '';
-  PACKAGES.forEach(p=>{
-    const c = countdownInfo(p.deadline);
-    const div = document.createElement('div');
-    div.className = 'card round-card';
-    div.innerHTML = `
-      <div class="row-item" style="border:none; padding:0; flex-wrap:wrap; gap:6px;">
-        <div>
-          <strong>${p.label} — ${testById(p.testId).name} — ${p.samples.length} Sample${p.samples.length===1?'':'s'}</strong>
-          <div class="meta">provided by ${facilityName(p.providingFacilityId)}</div>
-          <div class="countdown ${c.cls}">${c.status==='closed' ? (c.text==='No deadline set' ? c.text : 'Closed') : c.text}</div>
-        </div>
-        <span class="badge ${c.cls}">${c.status==='closed' ? 'Closed' : c.label}</span>
-      </div>
-      <div class="sample-chip-row" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
-        ${p.samples.map(s=>{
-          const subStatus = MY_SUBMISSION_STATUS[s.id];
-          const submitted = subStatus === 'submitted';
-          return `<button class="secondary small sample-chip" data-round="${s.id}" style="${String(s.id)===String(selectedRoundId) ? 'outline:2px solid #12211F;' : ''}">
-            Sample ${s.sampleId} ${submitted ? '✓' : '·'} <span style="color:${submitted?'#0d3b30':'#8a1f1f'};">${submitted?'Submitted':'Not submitted'}</span>
-          </button>`;
-        }).join('')}
-      </div>`;
-    div.querySelectorAll('.sample-chip').forEach(chip=>{
-      chip.addEventListener('click', ()=>{
-        selectedRoundId = Number(chip.dataset.round);
-        renderRounds();
-        showToast(`Selected: ${p.label} — Sample ${chip.textContent.trim()}`);
-      });
-    });
-    el.appendChild(div);
-  });
-}
-
-/* ---------------- USER: Submit Result ---------------- */
 function dynamicFieldsHtml(testId, existing){
   const t = testById(testId);
   existing = existing || {};
@@ -1832,170 +1843,299 @@ function dynamicFieldsHtml(testId, existing){
     return notPerformedRow(f.key, control, fs.notPerformed, fs.reason);
   }).join('');
 }
-function collectResult(testId){
+// All of the following are container-scoped (never document-scoped), since a package screen
+// renders one full set of these controls per sample simultaneously in the DOM.
+function val(container, id){ const el = container.querySelector('#'+id); return el ? el.value : ''; }
+function collectResult(testId, container){
   const t = testById(testId);
   const fieldObj = (key) => {
-    const cb = document.querySelector(`.not-performed-cb[data-field="${key}"]`);
+    const cb = container.querySelector(`.not-performed-cb[data-field="${key}"]`);
     const notPerformed = cb ? cb.checked : false;
-    const reasonSel = document.querySelector(`.np-reason-select[data-field="${key}"]`);
+    const reasonSel = container.querySelector(`.np-reason-select[data-field="${key}"]`);
     const reason = notPerformed ? (reasonSel ? reasonSel.value : '') : null;
-    const raw = val('rf_'+key);
+    const raw = val(container, 'rf_'+key);
     return { value: notPerformed ? null : (raw===''?null:raw), notPerformed, reason };
   };
   const o = {};
   t.fields.forEach(f=>o[f.key]=fieldObj(f.key));
   return o;
 }
-function val(id){ const el = document.getElementById(id); return el ? el.value : ''; }
-// Returns a list of { key, label } for every field currently marked Test Not Performed
-// without a reason selected — used to block save/submit until all are resolved.
-function missingNotPerformedReasons(testId){
+// Returns a list of field labels currently marked Test Not Performed without a reason selected.
+function missingNotPerformedReasons(testId, container){
   const t = testById(testId);
   const missing = [];
   t.fields.forEach(f=>{
-    const cb = document.querySelector(`.not-performed-cb[data-field="${f.key}"]`);
+    const cb = container.querySelector(`.not-performed-cb[data-field="${f.key}"]`);
     if(cb && cb.checked){
-      const reasonSel = document.querySelector(`.np-reason-select[data-field="${f.key}"]`);
+      const reasonSel = container.querySelector(`.np-reason-select[data-field="${f.key}"]`);
       if(!reasonSel || !reasonSel.value) missing.push(f.label);
     }
   });
   return missing;
 }
-function wireNotPerformedCheckboxes(){
-  document.querySelectorAll('.not-performed-cb').forEach(cb=>{
-    const control = document.getElementById('rf_'+cb.dataset.field);
-    const reasonSel = document.querySelector(`.np-reason-select[data-field="${cb.dataset.field}"]`);
+function wireNotPerformedCheckboxes(container){
+  container.querySelectorAll('.not-performed-cb').forEach(cb=>{
+    const control = container.querySelector('#rf_'+cb.dataset.field);
+    const reasonSel = container.querySelector(`.np-reason-select[data-field="${cb.dataset.field}"]`);
     if(control) control.disabled = cb.checked;
     if(reasonSel) reasonSel.style.display = cb.checked ? '' : 'none';
     cb.addEventListener('change', ()=>{
       if(control){ control.disabled = cb.checked; if(cb.checked) control.value=''; }
       if(reasonSel){
         reasonSel.style.display = cb.checked ? '' : 'none';
-        // Clearing the result back to "performed" must not leave a stale reason behind.
         if(!cb.checked) reasonSel.value = '';
       }
     });
   });
 }
 
+function renderSamplePanelHtml(pkg, sample, mine, expanded){
+  const locked = mine && mine.status === 'submitted';
+  const rejected = mine ? mine.sampleAcceptability === 'rejected' : false;
+  const statusBadge = locked
+    ? { text:'Submitted', bg:'#e3f3ea', fg:'#0d3b30' }
+    : rejected
+      ? { text:'Rejected', bg:'#fde2e2', fg:'#8a1f1f' }
+      : { text:'Incomplete', bg:'#fff3c4', fg:'#7a5b00' };
+  return `
+  <div class="card sample-panel" data-round="${sample.id}">
+    <div class="row-item sample-panel-header" data-round="${sample.id}" style="cursor:pointer; border:none; padding-top:0;">
+      <div><strong>Sample ${sample.sampleId}</strong></div>
+      <span class="badge" data-status-badge="${sample.id}" style="background:${statusBadge.bg}; color:${statusBadge.fg};">${statusBadge.text}</span>
+    </div>
+    <div class="sample-panel-body" data-round="${sample.id}" style="display:${expanded?'block':'none'};">
+      <h4 class="fieldset-title" style="margin-top:0;">Sample receipt</h4>
+      <div class="row2">
+        <div><label>Date sample received *</label><input type="date" class="p-date-received" value="${mine?.dateReceived || ''}"></div>
+        <div><label>Kit / method used *</label><input type="text" class="p-method-used" value="${mine?.methodUsed || ''}"></div>
+      </div>
+      <label>Notes on sample condition *</label>
+      <textarea class="p-sample-condition">${mine?.sampleCondition || ''}</textarea>
+      <label>Sample acceptability *</label>
+      <div style="display:flex; gap:24px; align-items:center; margin-bottom:8px;">
+        <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="acceptability_${sample.id}" class="p-accepted" ${mine?.sampleAcceptability==='accepted'?'checked':''}><span>Accepted</span></label>
+        <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="acceptability_${sample.id}" class="p-rejected" ${mine?.sampleAcceptability==='rejected'?'checked':''}><span>Rejected</span></label>
+      </div>
+      <div class="p-rejection-reason-wrap" style="display:${rejected?'block':'none'};">
+        <label>Reason for rejection *</label>
+        <textarea class="p-rejection-reason">${mine?.sampleRejectionReason || ''}</textarea>
+      </div>
+      <div class="p-result-section-wrap" style="display:${rejected?'none':'block'};">
+        <h4 class="fieldset-title">Result</h4>
+        <div class="p-dynamic-fields">${dynamicFieldsHtml(pkg.testId, mine?.result)}</div>
+      </div>
+      <h4 class="fieldset-title">Personnel</h4>
+      <div class="row2">
+        <div><label>Tested by *</label><input type="text" class="p-personnel-testing" value="${mine?.personnelTesting || ''}"></div>
+        <div><label>Verified by *</label><input type="text" class="p-personnel-verifying" value="${mine?.personnelVerifying || ''}"></div>
+      </div>
+      ${locked ? '<div class="meta" style="margin-top:8px; color:#0d3b30;">✓ Submitted — locked, can no longer be edited.</div>' : ''}
+    </div>
+  </div>`;
+}
+function togglePanelRejection(container){
+  const rejected = container.querySelector('.p-rejected').checked;
+  container.querySelector('.p-rejection-reason-wrap').style.display = rejected ? 'block' : 'none';
+  container.querySelector('.p-result-section-wrap').style.display = rejected ? 'none' : 'block';
+}
+function updatePanelStatus(pkg, sample, container){
+  const badge = document.querySelector(`[data-status-badge="${sample.id}"]`);
+  if(!badge) return;
+  const mine = MY_PACKAGE_SUBMISSIONS[sample.id];
+  if(mine && mine.status==='submitted'){ badge.textContent='Submitted'; badge.style.background='#e3f3ea'; badge.style.color='#0d3b30'; return; }
+  const rejected = container.querySelector('.p-rejected').checked;
+  if(rejected){ badge.textContent='Rejected'; badge.style.background='#fde2e2'; badge.style.color='#8a1f1f'; return; }
+  const missing = missingNotPerformedReasons(pkg.testId, container);
+  const ready = missing.length===0;
+  badge.textContent = ready ? 'Ready' : 'Incomplete';
+  badge.style.background = ready ? '#e3f3ea' : '#fff3c4';
+  badge.style.color = ready ? '#0d3b30' : '#7a5b00';
+}
+function wireSamplePanel(pkg, sample, container){
+  const mine = MY_PACKAGE_SUBMISSIONS[sample.id];
+  const locked = mine && mine.status === 'submitted';
+  wireNotPerformedCheckboxes(container);
+  container.querySelector('.p-accepted').addEventListener('change', ()=>{ togglePanelRejection(container); updatePanelStatus(pkg, sample, container); });
+  container.querySelector('.p-rejected').addEventListener('change', ()=>{ togglePanelRejection(container); updatePanelStatus(pkg, sample, container); });
+  container.addEventListener('input', ()=>updatePanelStatus(pkg, sample, container));
+  container.addEventListener('change', ()=>updatePanelStatus(pkg, sample, container));
+  if(locked){
+    container.querySelectorAll('input,select,textarea,button').forEach(el=>el.disabled=true);
+  }
+}
+
 async function renderSubmit(){
   const notice = document.getElementById('noRoundNotice');
   const wrap = document.getElementById('submitFormWrap');
-  const round = ROUNDS.find(r=>String(r.id)===String(selectedRoundId));
-  if(!round){ notice.style.display='block'; wrap.style.display='none'; return; }
+  const pkg = packageById(selectedPackageId);
+  if(!pkg){ notice.style.display='block'; wrap.style.display='none'; return; }
   notice.style.display='none'; wrap.style.display='block';
 
-  const c = countdownInfo(round.deadline);
-  document.getElementById('roundInfoCard').innerHTML = `
-    <strong>${testById(round.testId).name}</strong>
-    <div class="meta" style="margin-top:4px;">SAMPLE ${round.sampleId} · provided by ${facilityName(round.providingFacilityId)}</div>
+  const c = countdownInfo(pkg.deadline);
+  const fileName = pkg.instructionsFileName;
+  document.getElementById('packageInfoCard').innerHTML = `
+    <strong>${pkg.label} — ${testById(pkg.testId).name} — ${pkg.samples.length} Sample${pkg.samples.length===1?'':'s'}</strong>
+    <div class="meta" style="margin-top:4px;">provided by ${facilityName(pkg.providingFacilityId)}</div>
     <div class="countdown ${c.cls}" style="margin-top:6px;">${c.status==='closed' ? 'This round is closed.' : c.text}</div>
-    ${round.instructions ? `<div class="note" style="margin-top:10px;"><strong>Testing instructions:</strong><br>${round.instructions}</div>` : ''}
-    ${round.instructionsFileName ? `<div class="meta" style="margin-top:6px;"><a href="#" id="submitDownloadInstructions">📎 ${round.instructionsFileName}</a></div>` : ''}`;
-  if(round.instructionsFileName){
+    ${fileName ? `<div class="meta" style="margin-top:6px;"><a href="#" id="submitDownloadInstructions">📎 ${fileName}</a></div>` : '<div class="meta" style="margin-top:6px; color:#8a1f1f;">No instructions file was attached to this round.</div>'}`;
+  if(fileName){
     document.getElementById('submitDownloadInstructions').addEventListener('click', (e)=>{
-      e.preventDefault(); downloadInstructionsFile(round.id, round.instructionsFileName);
+      e.preventDefault(); downloadPackageInstructionsFile(pkg.id, fileName);
     });
   }
 
-  const mine = await api(`/rounds/${round.id}/submissions/mine`);
+  // One call loads this facility's draft/submitted data for every sample in the package —
+  // fixes the instructions file never having been reachable here for packaged rounds, and
+  // avoids one request per sample.
+  MY_PACKAGE_SUBMISSIONS = await api(`/round-packages/${pkg.id}/submissions/mine`);
 
-  document.getElementById('dateReceived').value = mine?.dateReceived || '';
-  document.getElementById('methodUsed').value = mine?.methodUsed || '';
-  document.getElementById('sampleCondition').value = mine?.sampleCondition || '';
-  document.getElementById('dynamicResultFields').innerHTML = dynamicFieldsHtml(round.testId, mine?.result);
-  wireNotPerformedCheckboxes();
-  document.getElementById('personnelTesting').value = mine?.personnelTesting || '';
-  document.getElementById('personnelVerifying').value = mine?.personnelVerifying || '';
+  const panelsWrap = document.getElementById('samplePanelsWrap');
+  panelsWrap.innerHTML = pkg.samples.map((s, idx)=>renderSamplePanelHtml(pkg, s, MY_PACKAGE_SUBMISSIONS[s.id], idx===0)).join('');
+  pkg.samples.forEach(s=>{
+    const container = panelsWrap.querySelector(`.sample-panel-body[data-round="${s.id}"]`);
+    wireSamplePanel(pkg, s, container);
+  });
+  panelsWrap.querySelectorAll('.sample-panel-header').forEach(header=>{
+    header.addEventListener('click', ()=>{
+      const roundId = header.dataset.round;
+      const body = panelsWrap.querySelector(`.sample-panel-body[data-round="${roundId}"]`);
+      body.style.display = body.style.display === 'none' ? 'block' : 'none';
+    });
+  });
 
-  document.getElementById('sampleAccepted').checked = mine?.sampleAcceptability === 'accepted';
-  document.getElementById('sampleRejected').checked = mine?.sampleAcceptability === 'rejected';
-  document.getElementById('sampleRejectionReason').value = mine?.sampleRejectionReason || '';
-  document.getElementById('rejectionReasonWrap').style.display = mine?.sampleAcceptability === 'rejected' ? 'block' : 'none';
-  document.getElementById('resultSectionWrap').style.display = mine?.sampleAcceptability === 'rejected' ? 'none' : 'block';
+  document.getElementById('sharedRejected').checked = false;
+  document.getElementById('sharedAccepted').checked = false;
+  document.getElementById('sharedRejectionReasonWrap').style.display = 'none';
+  document.getElementById('applyConditionsToAllBtn').onclick = ()=>{
+    const sharedDate = document.getElementById('sharedDateReceived').value;
+    const sharedMethod = document.getElementById('sharedMethodUsed').value;
+    const sharedCondition = document.getElementById('sharedSampleCondition').value;
+    const sharedAccepted = document.getElementById('sharedAccepted').checked;
+    const sharedRejected = document.getElementById('sharedRejected').checked;
+    const sharedReason = document.getElementById('sharedSampleRejectionReason').value;
+    let appliedCount = 0;
+    pkg.samples.forEach(s=>{
+      const mine = MY_PACKAGE_SUBMISSIONS[s.id];
+      if(mine && mine.status==='submitted') return; // never touch a locked/finalized sample
+      const container = panelsWrap.querySelector(`.sample-panel-body[data-round="${s.id}"]`);
+      if(!container) return;
+      container.querySelector('.p-date-received').value = sharedDate;
+      container.querySelector('.p-method-used').value = sharedMethod;
+      container.querySelector('.p-sample-condition').value = sharedCondition;
+      if(sharedAccepted) container.querySelector('.p-accepted').checked = true;
+      if(sharedRejected) container.querySelector('.p-rejected').checked = true;
+      container.querySelector('.p-rejection-reason').value = sharedReason;
+      togglePanelRejection(container);
+      updatePanelStatus(pkg, s, container);
+      appliedCount++;
+    });
+    showToast(appliedCount ? `Applied to ${appliedCount} sample(s).` : 'Nothing to apply — every sample is already submitted.');
+  };
+  document.getElementById('sharedRejected').onchange = ()=>{
+    document.getElementById('sharedRejectionReasonWrap').style.display = document.getElementById('sharedRejected').checked ? 'block' : 'none';
+  };
+  document.getElementById('sharedAccepted').onchange = ()=>{
+    document.getElementById('sharedRejectionReasonWrap').style.display = 'none';
+  };
 
   const closed = c.status === 'closed';
-  const locked = mine?.status === 'submitted';
-  document.getElementById('saveExitBtn').disabled = closed || locked;
-  document.getElementById('submitFinalBtn').disabled = closed || locked;
-  document.getElementById('submitFinalBtn').textContent = locked ? 'Already submitted' : 'Submit final result';
+  document.getElementById('saveAllDraftBtn').disabled = closed;
+  document.getElementById('submitAllBtn').disabled = closed;
+  document.getElementById('saveAllDraftBtn').onclick = ()=>saveAllSamples(pkg, false);
+  document.getElementById('submitAllBtn').onclick = ()=>saveAllSamples(pkg, true);
 }
 
-// A rejected sample was never tested, so there's nothing to report — hide the Result
-// section entirely and leave only the rejection reason for the facility to fill in.
-document.querySelectorAll('input[name="sampleAcceptability"]').forEach(r=>{
-  r.addEventListener('change', ()=>{
-    const rejected = document.getElementById('sampleRejected').checked;
-    document.getElementById('rejectionReasonWrap').style.display = rejected ? 'block' : 'none';
-    document.getElementById('resultSectionWrap').style.display = rejected ? 'none' : 'block';
-  });
-});
+// Collects and (when finalizing) validates one sample's panel. Every required slot must be
+// filled — a real value or a validly-reasoned Test Not Performed — before it can be finalized.
+function collectSamplePayload(pkg, sample, container, finalize){
+  const dateReceived = container.querySelector('.p-date-received').value;
+  const methodUsed = container.querySelector('.p-method-used').value;
+  const sampleCondition = container.querySelector('.p-sample-condition').value;
+  const accepted = container.querySelector('.p-accepted').checked;
+  const rejected = container.querySelector('.p-rejected').checked;
+  const sampleAcceptability = accepted ? 'accepted' : rejected ? 'rejected' : null;
+  const sampleRejectionReason = container.querySelector('.p-rejection-reason').value;
+  const personnelTesting = container.querySelector('.p-personnel-testing').value;
+  const personnelVerifying = container.querySelector('.p-personnel-verifying').value;
 
-async function saveEntry(finalize){
-  const round = ROUNDS.find(r=>String(r.id)===String(selectedRoundId));
-  if(!round) return;
-  const personnelTesting = val('personnelTesting');
-  const personnelVerifying = val('personnelVerifying');
-  const methodUsed = val('methodUsed');
-  const sampleAcceptability = document.getElementById('sampleAccepted').checked ? 'accepted'
-    : document.getElementById('sampleRejected').checked ? 'rejected' : null;
-  const sampleRejectionReason = val('sampleRejectionReason');
-
-  if(sampleAcceptability !== 'rejected'){
-    const missing = missingNotPerformedReasons(round.testId);
-    if(missing.length){
-      showToast(`Select a reason for "Test Not Performed": ${missing.join(', ')}`);
-      return;
-    }
-  }
+  const errors = [];
+  const result = sampleAcceptability === 'rejected' ? {} : collectResult(pkg.testId, container);
 
   if(finalize){
-    if(!personnelTesting || !personnelVerifying){
-      showToast('Enter both tested-by and verified-by names before final submission.');
-      return;
-    }
-    if(!val('dateReceived')){
-      showToast('Date sample received is required.');
-      return;
-    }
-    if(!methodUsed.trim()){
-      showToast('Kit / method used is required.');
-      return;
-    }
-    if(!val('sampleCondition').trim()){
-      showToast('Notes on sample condition are required.');
-      return;
-    }
-    if(!sampleAcceptability){
-      showToast('Indicate whether the sample was accepted or rejected on receipt.');
-      return;
-    }
-    if(sampleAcceptability === 'rejected' && !sampleRejectionReason.trim()){
-      showToast('Enter a reason for rejecting the sample.');
-      return;
+    if(!dateReceived) errors.push(`Sample ${sample.sampleId}: date received is required.`);
+    if(!methodUsed || !methodUsed.trim()) errors.push(`Sample ${sample.sampleId}: method used is required.`);
+    if(!sampleCondition || !sampleCondition.trim()) errors.push(`Sample ${sample.sampleId}: notes on sample condition are required.`);
+    if(!sampleAcceptability) errors.push(`Sample ${sample.sampleId}: indicate accepted or rejected.`);
+    if(sampleAcceptability==='rejected' && !(sampleRejectionReason||'').trim()) errors.push(`Sample ${sample.sampleId}: reason for rejection is required.`);
+    if(!personnelTesting || !personnelVerifying) errors.push(`Sample ${sample.sampleId}: tested-by and verified-by names are required.`);
+    if(sampleAcceptability === 'accepted'){
+      const missingReasons = missingNotPerformedReasons(pkg.testId, container);
+      if(missingReasons.length) errors.push(`Sample ${sample.sampleId}: select a reason for "Test Not Performed" — ${missingReasons.join(', ')}.`);
+      const testDef = testById(pkg.testId);
+      const missingSlots = testDef.fields.filter(f=>{
+        const fs = result[f.key];
+        if(!fs) return true;
+        if(fs.notPerformed) return false; // already covered by missingReasons above
+        return fs.value === null || fs.value === undefined || fs.value === '';
+      });
+      if(missingSlots.length) errors.push(`Sample ${sample.sampleId}: every result slot is required — missing ${missingSlots.map(f=>f.label).join(', ')}.`);
     }
   }
 
-  const body = {
-    dateReceived: val('dateReceived'),
-    methodUsed,
-    sampleCondition: val('sampleCondition'),
-    sampleAcceptability,
-    sampleRejectionReason,
-    result: sampleAcceptability === 'rejected' ? {} : collectResult(round.testId),
-    personnelTesting, personnelVerifying,
-    finalize,
+  return {
+    errors,
+    payload: { dateReceived, methodUsed, sampleCondition, sampleAcceptability, sampleRejectionReason, result, personnelTesting, personnelVerifying, finalize },
   };
-  try{
-    await api(`/rounds/${round.id}/submissions/mine`, { method:'PUT', body });
-    showToast(finalize ? 'Result submitted.' : 'Draft saved. You can finish this later.');
-    MY_SUBMISSION_STATUS[round.id] = finalize ? 'submitted' : 'draft';
-    renderSubmit();
-  }catch(e){ showToast(e.message); }
 }
-document.getElementById('saveExitBtn').addEventListener('click', ()=>saveEntry(false));
-document.getElementById('submitFinalBtn').addEventListener('click', ()=>saveEntry(true));
 
+// One final action for the whole package — no per-sample "submit" step. Every non-submitted
+// sample in the package is validated and saved together; already-submitted samples are
+// skipped (never re-sent). Saving one sample's PUT call never touches another's row.
+async function saveAllSamples(pkg, finalize){
+  const panelsWrap = document.getElementById('samplePanelsWrap');
+  const allErrors = [];
+  const toSubmit = [];
+  pkg.samples.forEach(sample=>{
+    const mine = MY_PACKAGE_SUBMISSIONS[sample.id];
+    if(mine && mine.status==='submitted') return;
+    const container = panelsWrap.querySelector(`.sample-panel-body[data-round="${sample.id}"]`);
+    if(!container) return;
+    const { errors, payload } = collectSamplePayload(pkg, sample, container, finalize);
+    allErrors.push(...errors);
+    toSubmit.push({ sample, payload });
+  });
+
+  if(finalize && allErrors.length){
+    showToast(allErrors[0] + (allErrors.length>1 ? ` (+${allErrors.length-1} more issue(s) — check every sample)` : ''));
+    return;
+  }
+  if(toSubmit.length === 0){
+    showToast('Nothing to save — every sample in this round is already submitted.');
+    return;
+  }
+  if(finalize && !confirm(`Submit final results for ${toSubmit.length} sample(s) in ${pkg.label}? This locks each one and cannot be undone.`)) return;
+
+  let successCount = 0;
+  const failMessages = [];
+  for(const {sample, payload} of toSubmit){
+    try{
+      const saved = await api(`/rounds/${sample.id}/submissions/mine`, { method:'PUT', body: payload });
+      MY_PACKAGE_SUBMISSIONS[sample.id] = saved;
+      MY_SUBMISSION_STATUS[sample.id] = saved.status;
+    }catch(e){
+      failMessages.push(`Sample ${sample.sampleId}: ${e.message}`);
+      continue;
+    }
+    successCount++;
+  }
+
+  if(failMessages.length){
+    showToast(`${successCount} saved. ${failMessages.length} failed — ${failMessages[0]}`);
+  }else{
+    showToast(finalize ? `${successCount} sample result(s) submitted.` : `${successCount} sample(s) saved as draft.`);
+  }
+  renderSubmit();
+}
 /* ---------------- USER: My Feedback ---------------- */
 async function renderMyFeedback(){
   const el = document.getElementById('myFeedbackList');
@@ -2015,17 +2155,18 @@ async function renderMyFeedback(){
 
   el.innerHTML = Object.values(groups).map(({pkg, items})=>{
     const test = testById(items[0].round.testId);
+    // A sample is never labeled Acceptable/Unacceptable as a whole — that judgement applies
+    // per analyte (visible in the printed report), not to the sample overall. This chip is
+    // deliberately neutral: it only says whether feedback has been released yet.
     const sampleChips = items.map(({round, sub})=>{
       const fb = sub.feedback;
-      const status = fb ? fb.status : 'pending';
-      const cls = status==='acceptable' ? 'ok' : status==='unacceptable' ? 'alert' : 'neutral';
-      const label = status==='acceptable' ? 'Acceptable' : status==='unacceptable' ? 'Unacceptable'
-        : status==='not_evaluated' ? 'Not Evaluated' : 'Pending release';
-      return `<span class="flag ${cls}" style="margin:2px 4px 2px 0; display:inline-block;">Sample ${round.sampleId}: ${label}</span>`;
+      const released = fb && fb.released;
+      return `<span class="flag neutral" style="margin:2px 4px 2px 0; display:inline-block;">Sample ${round.sampleId}: ${released ? 'Feedback available' : 'Pending release'}</span>`;
     }).join('');
     const queryLinks = items.map(({round,sub})=>
       `<button class="secondary small query-fb" data-round="${round.id}" data-sub="${sub.id}">Query Sample ${round.sampleId}</button>`
     ).join(' ');
+    const key = pkg ? pkg.id : ('unpackaged-'+items[0].round.id);
     return `
       <div class="card">
         <div class="row-item" style="border:none; padding-top:0; flex-wrap:wrap;">
@@ -2033,7 +2174,8 @@ async function renderMyFeedback(){
         </div>
         <div style="margin:6px 0;">${sampleChips}</div>
         <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
-          <button class="secondary small print-fb-pkg" data-key="${pkg ? pkg.id : ('unpackaged-'+items[0].round.id)}">Print / download feedback</button>
+          <button class="secondary small print-fb-pkg" data-key="${key}">Print feedback</button>
+          <button class="secondary small download-fb-pkg" data-key="${key}">Download PDF</button>
           ${queryLinks}
         </div>
       </div>`;
@@ -2061,6 +2203,12 @@ async function renderMyFeedback(){
       printFeedbackPackage(group.pkg, group.items);
     });
   });
+  el.querySelectorAll('.download-fb-pkg').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const group = groups[btn.dataset.key];
+      downloadFeedbackPackagePdf(group.pkg, group.items);
+    });
+  });
 }
 function analyteMeta(testId){
   return testById(testId).fields;
@@ -2075,6 +2223,25 @@ function gradeLabel(status){
   if(status==='not_performed') return 'NP';
   return 'NE';
 }
+// Natural/numeric-aware sort so "Sample BTS2" sorts before "Sample BTS10" — plain string
+// sort would put BTS10 before BTS2 since '1' < '2' character-by-character.
+function naturalSampleCompare(a, b){
+  const re = /(\d+)|(\D+)/g;
+  const aParts = String(a).match(re) || [];
+  const bParts = String(b).match(re) || [];
+  const len = Math.max(aParts.length, bParts.length);
+  for(let i=0; i<len; i++){
+    const ap = aParts[i] || '', bp = bParts[i] || '';
+    const an = Number(ap), bn = Number(bp);
+    const bothNumeric = ap!=='' && bp!=='' && !isNaN(an) && !isNaN(bn);
+    if(bothNumeric){
+      if(an !== bn) return an - bn;
+    } else if(ap !== bp){
+      return ap < bp ? -1 : 1;
+    }
+  }
+  return 0;
+}
 function acceptabilityCell(status){
   const map = {
     acceptable: {label:'Acceptable', bg:'#d7f2df', fg:'#0d3b30'},
@@ -2084,11 +2251,12 @@ function acceptabilityCell(status){
     pending: {label:'Pending release', bg:'#fff3c4', fg:'#7a5b00'},
   };
   const m = map[status] || map.not_evaluated;
-  return `<td style="text-align:center; background:${m.bg}; color:${m.fg}; font-weight:600;">${m.label}</td>`;
+  return `<td style="background:${m.bg}; color:${m.fg}; font-weight:600;">${m.label}</td>`;
 }
-// One table per analyte field, one row per sample — matches the qualitative report template
-// exactly, including the separate ABO / Rhesus / Saline / AHG tables for Blood Grouping,
-// which fall out naturally here since each is just another field in that test's field list.
+// One table per analyte field, one row per sample (sorted lowest-to-highest sample ID) —
+// matches the qualitative report template, including the separate ABO / Rhesus / Saline /
+// AHG tables for Blood Grouping, which fall out naturally since each is just another field
+// in that test's field list.
 function qualitativeFieldTable(field, items){
   const rowsHtml = items.map(({round, sub})=>{
     const fb = sub.feedback;
@@ -2113,20 +2281,21 @@ function qualitativeFieldTable(field, items){
     return `<tr>
       <td>${round.sampleId}</td>
       <td>${resultText}</td>
-      <td style="text-align:center;">${acceptableResult}</td>
-      <td style="text-align:center;">${noOfLabs}</td>
+      <td>${acceptableResult}</td>
+      <td>${noOfLabs}</td>
       <td>${consensusText}</td>
       ${acceptabilityCell(status)}
     </tr>`;
   }).join('');
   return `<div class="fieldset-title" style="margin:14px 0 4px; font-size:10pt;">${field.label}</div>
-    <table style="width:100%; border-collapse:collapse; margin-bottom:6px; font-size:10pt;" border="1">
+    <table class="pr-table">
+      <colgroup><col style="width:14%;"><col style="width:18%;"><col style="width:18%;"><col style="width:12%;"><col style="width:26%;"><col style="width:12%;"></colgroup>
       <thead><tr><th>Sample ID</th><th>Your Result</th><th>Acceptable Result</th><th>No of Labs</th><th>Consensus</th><th>Acceptability</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>`;
 }
 // Quantitative tests keep the existing Mean/SD/SDI table design (untouched), just repeated
-// once per sample within the same combined package report.
+// once per sample (sorted lowest-to-highest) within the same combined package report.
 function quantitativeSampleSection(round, sub, testDef){
   const fb = sub.feedback || {};
   const hasFieldData = !!(fb.fields && fb.fieldStats);
@@ -2145,21 +2314,23 @@ function quantitativeSampleSection(round, sub, testDef){
       grade = gradeLabel(fEval.status);
       n = (stat && typeof stat.n==='number') ? stat.n : '—';
     }
-    return `<tr><td>${a.label}</td><td>${resultText}</td><td style="text-align:center;">${grade}</td><td style="text-align:center;">${n}</td><td style="text-align:center;">${mean}</td><td style="text-align:center;">${sd}</td><td style="text-align:center;">${sdi}</td><td style="text-align:center;">${range}</td><td>Peer Group Mean ± 2 SD</td></tr>`;
+    return `<tr><td>${a.label}</td><td>${resultText}</td><td>${grade}</td><td>${n}</td><td>${mean}</td><td>${sd}</td><td>${sdi}</td><td>${range}</td><td>Peer Group Mean ± 2 SD</td></tr>`;
   }).join('');
   return `<div class="fieldset-title" style="margin:14px 0 4px; font-size:10pt;">Sample ${round.sampleId}</div>
-    <table style="width:100%; border-collapse:collapse; margin-bottom:6px; font-size:10pt;" border="1">
+    <table class="pr-table">
       <thead><tr><th>Analyte</th><th>Result</th><th>Grade</th><th>Peer Group N</th><th>Mean</th><th>SD</th><th>SDI</th><th>Acceptable Range</th><th>Evaluation Criteria</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>`;
 }
-// One Performance Report per round package, covering every sample this facility submitted
-// in that round. Landscape + 10pt uniform font is enforced by the @media print CSS.
-function printFeedbackPackage(pkg, items){
+// Builds the report HTML (shared by both the Print action and the PDF download action, so
+// they can never drift apart into two different-looking reports).
+function buildFeedbackReportHtml(pkg, itemsUnsorted){
+  const items = [...itemsUnsorted].sort((a,b)=>naturalSampleCompare(a.round.sampleId, b.round.sampleId));
   const testDef = testById(items[0].round.testId);
   const quant = testDef.kind === 'quantitative';
   const deadline = pkg ? pkg.deadline : items[0].round.deadline;
   const label = pkg ? pkg.label : '';
+  const providingFacilityId = pkg ? pkg.providingFacilityId : items[0].round.providingFacilityId;
   const allReleased = items.every(({sub})=>sub.feedback && sub.feedback.released);
   const coatOfArmsSrc = (document.getElementById('headerCoatOfArms') || {}).src || '';
 
@@ -2179,12 +2350,24 @@ function printFeedbackPackage(pkg, items){
     </tr>`;
   }).join('');
 
-  const statusSummary = items.map(({round,sub})=>{
+  // Overall section: only unacceptable analytes, each tagged with the sample it came from.
+  // No consensus/reference detail here — that already lives in the per-analyte tables above.
+  // This never implies the whole sample failed — only specific analytes are listed.
+  const unacceptableEntries = [];
+  items.forEach(({round, sub})=>{
     const fb = sub.feedback;
-    const s = fb ? fb.status : 'pending';
-    const l = s==='acceptable' ? 'Acceptable' : s==='unacceptable' ? 'Unacceptable' : s==='not_evaluated' ? 'Not Evaluated' : 'Pending release';
-    return `Sample ${round.sampleId}: ${l}`;
-  }).join(' · ');
+    if(!fb || !fb.fields) return;
+    const fields = quant ? testDef.fields : testDef.fields;
+    fields.forEach(f=>{
+      const fEval = fb.fields[f.key];
+      if(fEval && fEval.status === 'unacceptable'){
+        unacceptableEntries.push(`${f.label} — Sample ${round.sampleId}`);
+      }
+    });
+  });
+  const overallHtml = unacceptableEntries.length
+    ? `<ul style="margin:4px 0 0 18px; padding:0; font-size:10pt;">${unacceptableEntries.map(e=>`<li>${e}</li>`).join('')}</ul>`
+    : `<p style="margin:4px 0 0; font-size:10pt;">No unacceptable analytes were identified in this round.</p>`;
 
   const commentsHtml = items.filter(({sub})=>sub.feedback && sub.feedback.comment)
     .map(({round,sub})=>`<div style="font-size:10pt; margin-bottom:4px; white-space:pre-line;"><strong>Sample ${round.sampleId} comment:</strong> ${sub.feedback.comment}</div>`)
@@ -2192,14 +2375,18 @@ function printFeedbackPackage(pkg, items){
 
   const signedFeedback = items.map(i=>i.sub.feedback).find(f=>f && f.verifiedBy);
 
-  document.getElementById('printArea').innerHTML = `
+  return `
     <div style="font-family:Arial,sans-serif; color:#12211F; font-size:10pt;">
+      <style>
+        .pr-table{width:100%; border-collapse:collapse; margin-bottom:10px; font-size:10pt; table-layout:fixed;}
+        .pr-table th, .pr-table td{border:1px solid #999; padding:5px 8px; text-align:center; word-wrap:break-word;}
+        .pr-table thead th{background:#707070; color:#fff; font-weight:600;}
+      </style>
       <table style="width:100%; border-collapse:collapse; margin-bottom:8px;">
         <tr>
           <td style="vertical-align:middle; width:56px;">${coatOfArmsSrc ? `<img src="${coatOfArmsSrc}" style="height:44px; width:auto;">` : ''}</td>
           <td style="vertical-align:middle;">
             <div style="font-weight:bold; font-size:13pt;">Ministry of Health, Zambia</div>
-            <div style="font-size:10pt; color:#555;">Copperbelt Province Interlaboratory Comparison Programme</div>
           </td>
           <td style="text-align:right; vertical-align:middle; font-size:10pt; color:#555;">
             Print date: ${new Date().toLocaleDateString()}<br>
@@ -2211,9 +2398,12 @@ function printFeedbackPackage(pkg, items){
 
       <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:10pt;">
         <tr>
-          <td style="width:33%; vertical-align:top;"><strong>Participant</strong><br>${facilityName(items[0].sub.facilityId)}</td>
-          <td style="width:33%; vertical-align:top;"><strong>Round / Test</strong><br>${label ? label+' — ' : ''}${testDef.name}</td>
-          <td style="width:33%; vertical-align:top;"><strong>Results Deadline</strong><br>${deadline || '—'}</td>
+          <td style="width:50%; vertical-align:top; padding-bottom:8px;"><strong>ILC Provider</strong><br>${facilityName(providingFacilityId)}</td>
+          <td style="width:50%; vertical-align:top; padding-bottom:8px;"><strong>Participant</strong><br>${facilityName(items[0].sub.facilityId)}</td>
+        </tr>
+        <tr>
+          <td style="width:50%; vertical-align:top;"><strong>Round / Test</strong><br>${label ? label+' — ' : ''}${testDef.name}</td>
+          <td style="width:50%; vertical-align:top;"><strong>Results Deadline</strong><br>${deadline || '—'}</td>
         </tr>
       </table>
 
@@ -2224,19 +2414,50 @@ function printFeedbackPackage(pkg, items){
 
       ${resultsHtml}
 
-      <table style="width:100%; border-collapse:collapse; margin:10px 0; font-size:10pt;">
-        <tr><td><strong>Overall Result Status:</strong> ${statusSummary}</td></tr>
-      </table>
+      <div style="margin:10px 0; font-size:10pt;">
+        <strong>Overall — Unacceptable Analytes:</strong>
+        ${overallHtml}
+      </div>
       ${commentsHtml}
 
       <p style="margin:14px 0 2px; font-size:8pt;">Reviewed by: ${signedFeedback ? signedFeedback.verifiedBy : '—'}</p>
       ${signedFeedback && signedFeedback.authorizedBy ? `<p style="margin:0; font-size:8pt;">Authorized by: ${signedFeedback.authorizedBy} on ${new Date(signedFeedback.authorizedAt).toLocaleDateString()}</p>` : ''}
 
       <hr style="margin-top:16px;">
-      <p style="font-size:8pt; color:#777;">Report prepared by the Copperbelt Province Interlaboratory Comparison Programme, Ministry of Health, Zambia.</p>
+      <p style="font-size:8pt; color:#777;">Report prepared by the Ministry of Health, Zambia.</p>
     </div>`;
+}
+// One Performance Report per round package, covering every sample this facility submitted
+// in that round. Landscape + 10pt uniform font is enforced by the @media print CSS.
+function printFeedbackPackage(pkg, items){
+  document.getElementById('printArea').innerHTML = buildFeedbackReportHtml(pkg, items);
   window.print();
 }
+// Real client-side PDF generation (html2pdf.js) — not dependent on the browser's print
+// dialog or a configured printer driver. Renders the same HTML used for printing, off-screen,
+// then saves it directly as a .pdf file.
+function downloadFeedbackPackagePdf(pkg, items){
+  const html = buildFeedbackReportHtml(pkg, items);
+  const container = document.createElement('div');
+  container.style.cssText = 'position:absolute; left:-9999px; top:0; width:1100px; background:#fff;';
+  container.innerHTML = html;
+  document.body.appendChild(container);
+  const testDef = testById(items[0].round.testId);
+  const filenameBase = `${pkg ? pkg.label : 'Performance-Report'} - ${testDef.name}`.replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
+  html2pdf().set({
+    margin: 8,
+    filename: `${filenameBase}.pdf`,
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
+  }).from(container).save().then(()=>{
+    document.body.removeChild(container);
+  }).catch((e)=>{
+    document.body.removeChild(container);
+    showToast('PDF generation failed: ' + e.message);
+  });
+}
+
 
 
 /* ---------------- Forgot / Activate / Reset password ---------------- */

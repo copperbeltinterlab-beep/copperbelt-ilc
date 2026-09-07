@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { buildConsensusReport } = require('../consensus');
-const { getTestName, NOT_PERFORMED_REASONS } = require('../testDefinitions');
+const { getTestName, getTestDef, NOT_PERFORMED_REASONS } = require('../testDefinitions');
 const { sendFeedbackReleasedEmail, sendFollowUpQueryEmail } = require('../email');
 const { isEligibleParticipant } = require('../participation');
 const { computeStatus } = require('../roundPackageStatus');
@@ -96,8 +96,11 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
   const {
     dateReceived, methodUsed, sampleCondition,
     sampleAcceptability, sampleRejectionReason,
-    result, personnelTesting, personnelVerifying, finalize,
+    personnelTesting, personnelVerifying, finalize,
   } = req.body;
+  // A rejected sample was never tested — never trust the client to have left the result
+  // object empty; a rejected sample can never carry result data no matter what is sent.
+  const result = sampleAcceptability === 'rejected' ? {} : req.body.result;
 
   if (finalize) {
     if (!personnelTesting || !personnelVerifying) {
@@ -118,12 +121,24 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
     if (sampleAcceptability === 'rejected' && !(sampleRejectionReason || '').trim()) {
       return res.status(400).json({ error: 'A reason is required when a sample is rejected.' });
     }
-    // Note: "Test Not Performed" is now a per-analyte choice living inside `result` itself
-    // (e.g. { urea: { value: null, notPerformed: true } }), not a sample-wide status. We don't
-    // require every individual field here — the frontend guides that per-analyte choice — but
-    // an accepted sample must have at least submitted a result object.
-    if (sampleAcceptability === 'accepted' && (!result || Object.keys(result).length === 0)) {
-      return res.status(400).json({ error: 'Enter results for this sample, or mark individual tests as not performed.' });
+    // Every required analyte slot must be filled — either a real value, or validly marked
+    // Test Not Performed — before an accepted sample can be finalized. A rejected sample has
+    // no analyte slots to fill at all, so this only applies when accepted.
+    if (sampleAcceptability === 'accepted') {
+      const testDef = getTestDef(round.test_id);
+      const missingLabels = [];
+      if (testDef) {
+        for (const key of testDef.fields) {
+          const raw = result ? result[key] : undefined;
+          const hasValue = raw && typeof raw === 'object'
+            ? (raw.notPerformed ? true : (raw.value !== null && raw.value !== undefined && raw.value !== ''))
+            : (raw !== null && raw !== undefined && raw !== '');
+          if (!hasValue) missingLabels.push(key);
+        }
+      }
+      if (missingLabels.length) {
+        return res.status(400).json({ error: `Every result slot is required before submitting. Missing: ${missingLabels.join(', ')}.` });
+      }
     }
   }
 
