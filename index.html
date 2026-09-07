@@ -90,6 +90,12 @@
     #printArea, #printArea *{visibility:visible;}
     #printArea{display:block; position:absolute; top:0; left:0; width:100%; padding:10px; font-size:10pt;}
   }
+  /* Performance Report tables — shared by print and PDF download, defined once here so it's
+     always present before either capture path runs (a <style> tag injected per-render inside
+     innerHTML can be missed by some renderers). */
+  .pr-table{width:100%; border-collapse:collapse; margin-bottom:10px; font-size:10pt; table-layout:fixed;}
+  .pr-table th, .pr-table td{border:1px solid #999; padding:5px 8px; text-align:center; word-wrap:break-word;}
+  .pr-table thead th{background:#707070; color:#fff; font-weight:600;}
 
 
   /* ===== PUBLIC HOME — MATCHES REFERENCE SCREENSHOT ===== */
@@ -486,19 +492,6 @@
           <select id="newRoundTest"></select>
           <label>ILC Year</label>
           <select id="newRoundYear"></select>
-          <label>Round Number</label>
-          <select id="newRoundNumber">
-            <option value="1">Round 1</option>
-            <option value="2">Round 2</option>
-            <option value="3">Round 3</option>
-            <option value="4">Round 4</option>
-            <option value="5">Round 5</option>
-            <option value="6">Round 6</option>
-            <option value="7">Round 7</option>
-            <option value="8">Round 8</option>
-            <option value="9">Round 9</option>
-            <option value="10">Round 10</option>
-          </select>
           <div class="meta" id="newRoundLabelPreview" style="margin:2px 0 8px;"></div>
           <label>Number of samples</label>
           <select id="newRoundSampleCount">
@@ -578,24 +571,16 @@
         <div class="card" id="packageInfoCard"></div>
 
         <div class="card" id="sharedConditionsCard">
-          <h3 class="fieldset-title" style="margin-top:0;">Sample Conditions</h3>
-          <div class="note" style="margin-bottom:10px;">If every sample in this round was received together in the same condition, fill this in once and apply it to all of them below. You can still adjust any individual sample afterwards if it genuinely differs.</div>
+          <h3 class="fieldset-title" style="margin-top:0;">Sample Condition</h3>
+          <div class="note" style="margin-bottom:10px;">Captured once for every sample in this round — all samples arrive and are logged together.</div>
           <div class="row2">
-            <div><label>Date sample received</label><input type="date" id="sharedDateReceived"></div>
-            <div><label>Kit / method used</label><input type="text" id="sharedMethodUsed" placeholder="e.g. Manual determination"></div>
+            <div><label>Date Received *</label><input type="date" id="sharedDateReceived"></div>
+            <div><label>Received By *</label><input type="text" id="sharedReceivedBy" placeholder="Name of personnel who received the samples"></div>
           </div>
-          <label>Notes on sample condition</label>
+          <label>Condition *</label>
           <textarea id="sharedSampleCondition" placeholder="e.g. Correct sample transportation temperature, no leakages observed"></textarea>
-          <label>Sample acceptability</label>
-          <div style="display:flex; gap:24px; align-items:center; margin-bottom:8px;">
-            <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="sharedSampleAcceptability" value="accepted" id="sharedAccepted"><span>Accepted</span></label>
-            <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="sharedSampleAcceptability" value="rejected" id="sharedRejected"><span>Rejected</span></label>
-          </div>
-          <div id="sharedRejectionReasonWrap" style="display:none;">
-            <label>Reason for rejection</label>
-            <textarea id="sharedSampleRejectionReason" placeholder="e.g. Sample leaked in transit, received outside stability window"></textarea>
-          </div>
-          <button class="secondary small" id="applyConditionsToAllBtn">Apply to all samples below</button>
+          <label>Method/Instrument *</label>
+          <input type="text" id="sharedMethodUsed" placeholder="e.g. Manual determination">
         </div>
 
         <div id="samplePanelsWrap"></div>
@@ -1333,7 +1318,7 @@ function renderProvide(){
         <div class="meta">Deadline: ${p.deadline || '—'}</div>
         <div class="meta">Samples: ${p.samples.map(s=>s.sampleId).join(', ')}</div>
         <div class="meta">Participating: ${participationLabel(p)}</div>
-        ${p.instructionsFileName ? `<div class="meta"><a href="#" class="download-pkg-instructions" data-id="${p.id}" data-filename="${p.instructionsFileName}">📎 ${p.instructionsFileName}</a></div>` : ''}
+        ${p.instructionsFileName ? `<div style="margin-top:4px;"><button class="secondary small download-pkg-instructions" data-id="${p.id}" data-filename="${p.instructionsFileName}">⬇ Testing Instructions</button></div>` : ''}
         ${p.status==='closed' ? `<div class="meta">Closed ${p.closedAt ? new Date(p.closedAt).toLocaleDateString() : ''}</div>` : ''}
         ${p.deletionRequestedAt ? `<div class="meta" style="color:#8a1f1f;">Deletion requested ${new Date(p.deletionRequestedAt).toLocaleDateString()} — awaiting Super Admin</div>` : ''}
       </div>
@@ -1423,8 +1408,7 @@ function renderProvide(){
 }
 function updateRoundLabelPreview(){
   const year = document.getElementById('newRoundYear').value;
-  const num = document.getElementById('newRoundNumber').value;
-  document.getElementById('newRoundLabelPreview').textContent = year && num ? `This will be created as: Round ${num} of ${year}` : '';
+  document.getElementById('newRoundLabelPreview').textContent = year ? `The round number for this test will be assigned automatically (e.g. Round 1, 2, 3... of ${year}).` : '';
 }
 async function patchPackage(id, formData){
   const res = await fetch(API_BASE + '/round-packages/' + id, {
@@ -1437,7 +1421,6 @@ async function patchPackage(id, formData){
   return data;
 }
 document.getElementById('newRoundYear').addEventListener('change', updateRoundLabelPreview);
-document.getElementById('newRoundNumber').addEventListener('change', updateRoundLabelPreview);
 document.querySelectorAll('.provide-subtab').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     provideSubTab = btn.dataset.status;
@@ -1472,7 +1455,6 @@ document.getElementById('newRoundSampleCount').addEventListener('change', render
 document.getElementById('addRoundBtn').addEventListener('click', async ()=>{
   const testId = document.getElementById('newRoundTest').value;
   const year = document.getElementById('newRoundYear').value;
-  const roundNumber = document.getElementById('newRoundNumber').value;
   const deadline = document.getElementById('newRoundDeadline').value;
   const fileInput = document.getElementById('newRoundInstructionsFile');
   const sampleIds = Array.from(document.querySelectorAll('.new-round-sample-name')).map(i=>i.value.trim());
@@ -1490,7 +1472,6 @@ document.getElementById('addRoundBtn').addEventListener('click', async ()=>{
   const formData = new FormData();
   formData.append('testId', testId);
   formData.append('year', year);
-  formData.append('roundNumber', roundNumber);
   formData.append('deadline', deadline);
   formData.append('sampleIds', JSON.stringify(sampleIds));
   formData.append('participationMode', participationMode);
@@ -1533,7 +1514,7 @@ function renderAllRounds(){
         <div class="meta">provided by ${facilityName(p.providingFacilityId)} · Deadline: ${p.deadline || '—'}</div>
         <div class="meta">Samples: ${p.samples.map(s=>s.sampleId).join(', ')}</div>
         <div class="meta">Participating: ${participationLabel(p)}</div>
-        ${p.instructionsFileName ? `<div class="meta"><a href="#" class="download-pkg-instructions-admin" data-id="${p.id}" data-filename="${p.instructionsFileName}">📎 ${p.instructionsFileName}</a></div>` : ''}
+        ${p.instructionsFileName ? `<div style="margin-top:4px;"><button class="secondary small download-pkg-instructions-admin" data-id="${p.id}" data-filename="${p.instructionsFileName}">⬇ Testing Instructions</button></div>` : ''}
         ${p.status==='closed' ? `<div class="meta">Closed ${p.closedAt ? new Date(p.closedAt).toLocaleDateString() : ''}</div>` : ''}
         ${p.deletionRequestedAt ? `<div class="meta" style="color:#8a1f1f; font-weight:600;">Deletion requested by ${(USERS.find(u=>u.id===p.deletionRequestedBy)||{}).name || '#'+p.deletionRequestedBy} on ${new Date(p.deletionRequestedAt).toLocaleDateString()}${p.deletionRequestReason ? ' — '+p.deletionRequestReason : ''}</div>` : ''}
       </div>
@@ -1891,12 +1872,9 @@ function wireNotPerformedCheckboxes(container){
 
 function renderSamplePanelHtml(pkg, sample, mine, expanded){
   const locked = mine && mine.status === 'submitted';
-  const rejected = mine ? mine.sampleAcceptability === 'rejected' : false;
   const statusBadge = locked
     ? { text:'Submitted', bg:'#e3f3ea', fg:'#0d3b30' }
-    : rejected
-      ? { text:'Rejected', bg:'#fde2e2', fg:'#8a1f1f' }
-      : { text:'Incomplete', bg:'#fff3c4', fg:'#7a5b00' };
+    : { text:'Incomplete', bg:'#fff3c4', fg:'#7a5b00' };
   return `
   <div class="card sample-panel" data-round="${sample.id}">
     <div class="row-item sample-panel-header" data-round="${sample.id}" style="cursor:pointer; border:none; padding-top:0;">
@@ -1904,47 +1882,22 @@ function renderSamplePanelHtml(pkg, sample, mine, expanded){
       <span class="badge" data-status-badge="${sample.id}" style="background:${statusBadge.bg}; color:${statusBadge.fg};">${statusBadge.text}</span>
     </div>
     <div class="sample-panel-body" data-round="${sample.id}" style="display:${expanded?'block':'none'};">
-      <h4 class="fieldset-title" style="margin-top:0;">Sample receipt</h4>
-      <div class="row2">
-        <div><label>Date sample received *</label><input type="date" class="p-date-received" value="${mine?.dateReceived || ''}"></div>
-        <div><label>Kit / method used *</label><input type="text" class="p-method-used" value="${mine?.methodUsed || ''}"></div>
-      </div>
-      <label>Notes on sample condition *</label>
-      <textarea class="p-sample-condition">${mine?.sampleCondition || ''}</textarea>
-      <label>Sample acceptability *</label>
-      <div style="display:flex; gap:24px; align-items:center; margin-bottom:8px;">
-        <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="acceptability_${sample.id}" class="p-accepted" ${mine?.sampleAcceptability==='accepted'?'checked':''}><span>Accepted</span></label>
-        <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="acceptability_${sample.id}" class="p-rejected" ${mine?.sampleAcceptability==='rejected'?'checked':''}><span>Rejected</span></label>
-      </div>
-      <div class="p-rejection-reason-wrap" style="display:${rejected?'block':'none'};">
-        <label>Reason for rejection *</label>
-        <textarea class="p-rejection-reason">${mine?.sampleRejectionReason || ''}</textarea>
-      </div>
-      <div class="p-result-section-wrap" style="display:${rejected?'none':'block'};">
-        <h4 class="fieldset-title">Result</h4>
-        <div class="p-dynamic-fields">${dynamicFieldsHtml(pkg.testId, mine?.result)}</div>
-      </div>
+      <h4 class="fieldset-title" style="margin-top:0;">Result</h4>
+      <div class="p-dynamic-fields">${dynamicFieldsHtml(pkg.testId, mine?.result)}</div>
       <h4 class="fieldset-title">Personnel</h4>
       <div class="row2">
-        <div><label>Tested by *</label><input type="text" class="p-personnel-testing" value="${mine?.personnelTesting || ''}"></div>
-        <div><label>Verified by *</label><input type="text" class="p-personnel-verifying" value="${mine?.personnelVerifying || ''}"></div>
+        <div><label>Tested By *</label><input type="text" class="p-personnel-testing" value="${mine?.personnelTesting || ''}"></div>
+        <div><label>Results Authorized By *</label><input type="text" class="p-personnel-verifying" value="${mine?.personnelVerifying || ''}"></div>
       </div>
       ${locked ? '<div class="meta" style="margin-top:8px; color:#0d3b30;">✓ Submitted — locked, can no longer be edited.</div>' : ''}
     </div>
   </div>`;
-}
-function togglePanelRejection(container){
-  const rejected = container.querySelector('.p-rejected').checked;
-  container.querySelector('.p-rejection-reason-wrap').style.display = rejected ? 'block' : 'none';
-  container.querySelector('.p-result-section-wrap').style.display = rejected ? 'none' : 'block';
 }
 function updatePanelStatus(pkg, sample, container){
   const badge = document.querySelector(`[data-status-badge="${sample.id}"]`);
   if(!badge) return;
   const mine = MY_PACKAGE_SUBMISSIONS[sample.id];
   if(mine && mine.status==='submitted'){ badge.textContent='Submitted'; badge.style.background='#e3f3ea'; badge.style.color='#0d3b30'; return; }
-  const rejected = container.querySelector('.p-rejected').checked;
-  if(rejected){ badge.textContent='Rejected'; badge.style.background='#fde2e2'; badge.style.color='#8a1f1f'; return; }
   const missing = missingNotPerformedReasons(pkg.testId, container);
   const ready = missing.length===0;
   badge.textContent = ready ? 'Ready' : 'Incomplete';
@@ -1955,8 +1908,6 @@ function wireSamplePanel(pkg, sample, container){
   const mine = MY_PACKAGE_SUBMISSIONS[sample.id];
   const locked = mine && mine.status === 'submitted';
   wireNotPerformedCheckboxes(container);
-  container.querySelector('.p-accepted').addEventListener('change', ()=>{ togglePanelRejection(container); updatePanelStatus(pkg, sample, container); });
-  container.querySelector('.p-rejected').addEventListener('change', ()=>{ togglePanelRejection(container); updatePanelStatus(pkg, sample, container); });
   container.addEventListener('input', ()=>updatePanelStatus(pkg, sample, container));
   container.addEventListener('change', ()=>updatePanelStatus(pkg, sample, container));
   if(locked){
@@ -1977,10 +1928,10 @@ async function renderSubmit(){
     <strong>${pkg.label} — ${testById(pkg.testId).name} — ${pkg.samples.length} Sample${pkg.samples.length===1?'':'s'}</strong>
     <div class="meta" style="margin-top:4px;">provided by ${facilityName(pkg.providingFacilityId)}</div>
     <div class="countdown ${c.cls}" style="margin-top:6px;">${c.status==='closed' ? 'This round is closed.' : c.text}</div>
-    ${fileName ? `<div class="meta" style="margin-top:6px;"><a href="#" id="submitDownloadInstructions">📎 ${fileName}</a></div>` : '<div class="meta" style="margin-top:6px; color:#8a1f1f;">No instructions file was attached to this round.</div>'}`;
+    ${fileName ? `<button class="secondary small download-testing-instructions-btn" data-id="${pkg.id}" data-filename="${fileName}" style="margin-top:8px;">⬇ Testing Instructions</button>` : '<div class="meta" style="margin-top:6px; color:#8a1f1f;">No instructions file was attached to this round.</div>'}`;
   if(fileName){
-    document.getElementById('submitDownloadInstructions').addEventListener('click', (e)=>{
-      e.preventDefault(); downloadPackageInstructionsFile(pkg.id, fileName);
+    document.getElementById('packageInfoCard').querySelector('.download-testing-instructions-btn').addEventListener('click', ()=>{
+      downloadPackageInstructionsFile(pkg.id, fileName);
     });
   }
 
@@ -1988,6 +1939,18 @@ async function renderSubmit(){
   // fixes the instructions file never having been reachable here for packaged rounds, and
   // avoids one request per sample.
   MY_PACKAGE_SUBMISSIONS = await api(`/round-packages/${pkg.id}/submissions/mine`);
+
+  // Sample Condition is captured once for the whole round — pre-fill from any existing
+  // submission (every sample carries the same values once saved).
+  const anyExisting = pkg.samples.map(s=>MY_PACKAGE_SUBMISSIONS[s.id]).find(Boolean);
+  document.getElementById('sharedDateReceived').value = anyExisting?.dateReceived || '';
+  document.getElementById('sharedReceivedBy').value = anyExisting?.receivedBy || '';
+  document.getElementById('sharedSampleCondition').value = anyExisting?.sampleCondition || '';
+  document.getElementById('sharedMethodUsed').value = anyExisting?.methodUsed || '';
+  const allLocked = pkg.samples.every(s=>MY_PACKAGE_SUBMISSIONS[s.id]?.status==='submitted');
+  ['sharedDateReceived','sharedReceivedBy','sharedSampleCondition','sharedMethodUsed'].forEach(id=>{
+    document.getElementById(id).disabled = allLocked;
+  });
 
   const panelsWrap = document.getElementById('samplePanelsWrap');
   panelsWrap.innerHTML = pkg.samples.map((s, idx)=>renderSamplePanelHtml(pkg, s, MY_PACKAGE_SUBMISSIONS[s.id], idx===0)).join('');
@@ -2003,41 +1966,6 @@ async function renderSubmit(){
     });
   });
 
-  document.getElementById('sharedRejected').checked = false;
-  document.getElementById('sharedAccepted').checked = false;
-  document.getElementById('sharedRejectionReasonWrap').style.display = 'none';
-  document.getElementById('applyConditionsToAllBtn').onclick = ()=>{
-    const sharedDate = document.getElementById('sharedDateReceived').value;
-    const sharedMethod = document.getElementById('sharedMethodUsed').value;
-    const sharedCondition = document.getElementById('sharedSampleCondition').value;
-    const sharedAccepted = document.getElementById('sharedAccepted').checked;
-    const sharedRejected = document.getElementById('sharedRejected').checked;
-    const sharedReason = document.getElementById('sharedSampleRejectionReason').value;
-    let appliedCount = 0;
-    pkg.samples.forEach(s=>{
-      const mine = MY_PACKAGE_SUBMISSIONS[s.id];
-      if(mine && mine.status==='submitted') return; // never touch a locked/finalized sample
-      const container = panelsWrap.querySelector(`.sample-panel-body[data-round="${s.id}"]`);
-      if(!container) return;
-      container.querySelector('.p-date-received').value = sharedDate;
-      container.querySelector('.p-method-used').value = sharedMethod;
-      container.querySelector('.p-sample-condition').value = sharedCondition;
-      if(sharedAccepted) container.querySelector('.p-accepted').checked = true;
-      if(sharedRejected) container.querySelector('.p-rejected').checked = true;
-      container.querySelector('.p-rejection-reason').value = sharedReason;
-      togglePanelRejection(container);
-      updatePanelStatus(pkg, s, container);
-      appliedCount++;
-    });
-    showToast(appliedCount ? `Applied to ${appliedCount} sample(s).` : 'Nothing to apply — every sample is already submitted.');
-  };
-  document.getElementById('sharedRejected').onchange = ()=>{
-    document.getElementById('sharedRejectionReasonWrap').style.display = document.getElementById('sharedRejected').checked ? 'block' : 'none';
-  };
-  document.getElementById('sharedAccepted').onchange = ()=>{
-    document.getElementById('sharedRejectionReasonWrap').style.display = 'none';
-  };
-
   const closed = c.status === 'closed';
   document.getElementById('saveAllDraftBtn').disabled = closed;
   document.getElementById('submitAllBtn').disabled = closed;
@@ -2045,52 +1973,49 @@ async function renderSubmit(){
   document.getElementById('submitAllBtn').onclick = ()=>saveAllSamples(pkg, true);
 }
 
-// Collects and (when finalizing) validates one sample's panel. Every required slot must be
-// filled — a real value or a validly-reasoned Test Not Performed — before it can be finalized.
+// Collects and (when finalizing) validates one sample's panel. Sample Condition (date/received
+// by/condition/method) is shared across every sample in the round — read once from the shared
+// block, not per panel. Every analyte result slot must be filled — a real value or a
+// validly-reasoned Test Not Performed — before this sample can be finalized.
 function collectSamplePayload(pkg, sample, container, finalize){
-  const dateReceived = container.querySelector('.p-date-received').value;
-  const methodUsed = container.querySelector('.p-method-used').value;
-  const sampleCondition = container.querySelector('.p-sample-condition').value;
-  const accepted = container.querySelector('.p-accepted').checked;
-  const rejected = container.querySelector('.p-rejected').checked;
-  const sampleAcceptability = accepted ? 'accepted' : rejected ? 'rejected' : null;
-  const sampleRejectionReason = container.querySelector('.p-rejection-reason').value;
+  const dateReceived = document.getElementById('sharedDateReceived').value;
+  const receivedBy = document.getElementById('sharedReceivedBy').value;
+  const sampleCondition = document.getElementById('sharedSampleCondition').value;
+  const methodUsed = document.getElementById('sharedMethodUsed').value;
   const personnelTesting = container.querySelector('.p-personnel-testing').value;
   const personnelVerifying = container.querySelector('.p-personnel-verifying').value;
 
   const errors = [];
-  const result = sampleAcceptability === 'rejected' ? {} : collectResult(pkg.testId, container);
+  const result = collectResult(pkg.testId, container);
 
   if(finalize){
-    if(!dateReceived) errors.push(`Sample ${sample.sampleId}: date received is required.`);
-    if(!methodUsed || !methodUsed.trim()) errors.push(`Sample ${sample.sampleId}: method used is required.`);
-    if(!sampleCondition || !sampleCondition.trim()) errors.push(`Sample ${sample.sampleId}: notes on sample condition are required.`);
-    if(!sampleAcceptability) errors.push(`Sample ${sample.sampleId}: indicate accepted or rejected.`);
-    if(sampleAcceptability==='rejected' && !(sampleRejectionReason||'').trim()) errors.push(`Sample ${sample.sampleId}: reason for rejection is required.`);
-    if(!personnelTesting || !personnelVerifying) errors.push(`Sample ${sample.sampleId}: tested-by and verified-by names are required.`);
-    if(sampleAcceptability === 'accepted'){
-      const missingReasons = missingNotPerformedReasons(pkg.testId, container);
-      if(missingReasons.length) errors.push(`Sample ${sample.sampleId}: select a reason for "Test Not Performed" — ${missingReasons.join(', ')}.`);
-      const testDef = testById(pkg.testId);
-      const missingSlots = testDef.fields.filter(f=>{
-        const fs = result[f.key];
-        if(!fs) return true;
-        if(fs.notPerformed) return false; // already covered by missingReasons above
-        return fs.value === null || fs.value === undefined || fs.value === '';
-      });
-      if(missingSlots.length) errors.push(`Sample ${sample.sampleId}: every result slot is required — missing ${missingSlots.map(f=>f.label).join(', ')}.`);
-    }
+    if(!dateReceived) errors.push('Sample Condition: Date Received is required.');
+    if(!receivedBy || !receivedBy.trim()) errors.push('Sample Condition: Received By is required.');
+    if(!sampleCondition || !sampleCondition.trim()) errors.push('Sample Condition: Condition is required.');
+    if(!methodUsed || !methodUsed.trim()) errors.push('Sample Condition: Method/Instrument is required.');
+    if(!personnelTesting || !personnelVerifying) errors.push(`Sample ${sample.sampleId}: Tested By and Results Authorized By names are required.`);
+    const missingReasons = missingNotPerformedReasons(pkg.testId, container);
+    if(missingReasons.length) errors.push(`Sample ${sample.sampleId}: select a reason for "Test Not Performed" — ${missingReasons.join(', ')}.`);
+    const testDef = testById(pkg.testId);
+    const missingSlots = testDef.fields.filter(f=>{
+      const fs = result[f.key];
+      if(!fs) return true;
+      if(fs.notPerformed) return false; // already covered by missingReasons above
+      return fs.value === null || fs.value === undefined || fs.value === '';
+    });
+    if(missingSlots.length) errors.push(`Sample ${sample.sampleId}: every result slot is required — missing ${missingSlots.map(f=>f.label).join(', ')}.`);
   }
 
   return {
     errors,
-    payload: { dateReceived, methodUsed, sampleCondition, sampleAcceptability, sampleRejectionReason, result, personnelTesting, personnelVerifying, finalize },
+    payload: { dateReceived, receivedBy, sampleCondition, methodUsed, result, personnelTesting, personnelVerifying, finalize },
   };
 }
 
 // One final action for the whole package — no per-sample "submit" step. Every non-submitted
-// sample in the package is validated and saved together; already-submitted samples are
-// skipped (never re-sent). Saving one sample's PUT call never touches another's row.
+// sample in the package is validated and saved together (sharing the one Sample Condition
+// entry); already-submitted samples are skipped (never re-sent). Saving one sample's PUT call
+// never touches another's row.
 async function saveAllSamples(pkg, finalize){
   const panelsWrap = document.getElementById('samplePanelsWrap');
   const allErrors = [];
@@ -2136,6 +2061,7 @@ async function saveAllSamples(pkg, finalize){
   }
   renderSubmit();
 }
+
 /* ---------------- USER: My Feedback ---------------- */
 async function renderMyFeedback(){
   const el = document.getElementById('myFeedbackList');
@@ -2338,17 +2264,10 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
     ? items.map(({round,sub})=>quantitativeSampleSection(round, sub, testDef)).join('')
     : testDef.fields.map(f=>qualitativeFieldTable(f, items)).join('');
 
-  const sampleConditionRows = items.map(({round,sub})=>{
-    const cond = sub.sampleAcceptability==='rejected'
-      ? 'Rejected' + (sub.sampleRejectionReason ? ': '+sub.sampleRejectionReason : '')
-      : (sub.sampleAcceptability==='accepted' ? 'Accepted' : '—');
-    return `<tr>
-      <td>${round.sampleId}</td>
-      <td>${sub.dateReceived || '—'}</td>
-      <td>${cond}${sub.sampleCondition ? ' — '+sub.sampleCondition : ''}</td>
-      <td>${sub.methodUsed || '—'}</td>
-    </tr>`;
-  }).join('');
+  // Sample Condition is now one shared entry for the whole round (every sample carries the
+  // same values once saved) — shown once, in this exact field order, with no "Sample" row
+  // identifier since it no longer varies per sample.
+  const conditionSource = items.map(i=>i.sub).find(s=>s.dateReceived || s.receivedBy || s.sampleCondition || s.methodUsed) || items[0].sub;
 
   // Overall section: only unacceptable analytes, each tagged with the sample it came from.
   // No consensus/reference detail here — that already lives in the per-analyte tables above.
@@ -2357,8 +2276,7 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
   items.forEach(({round, sub})=>{
     const fb = sub.feedback;
     if(!fb || !fb.fields) return;
-    const fields = quant ? testDef.fields : testDef.fields;
-    fields.forEach(f=>{
+    testDef.fields.forEach(f=>{
       const fEval = fb.fields[f.key];
       if(fEval && fEval.status === 'unacceptable'){
         unacceptableEntries.push(`${f.label} — Sample ${round.sampleId}`);
@@ -2369,24 +2287,25 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
     ? `<ul style="margin:4px 0 0 18px; padding:0; font-size:10pt;">${unacceptableEntries.map(e=>`<li>${e}</li>`).join('')}</ul>`
     : `<p style="margin:4px 0 0; font-size:10pt;">No unacceptable analytes were identified in this round.</p>`;
 
-  const commentsHtml = items.filter(({sub})=>sub.feedback && sub.feedback.comment)
-    .map(({round,sub})=>`<div style="font-size:10pt; margin-bottom:4px; white-space:pre-line;"><strong>Sample ${round.sampleId} comment:</strong> ${sub.feedback.comment}</div>`)
-    .join('');
+  // Testing Personnel — who actually tested/authorized results AT THE PARTICIPATING FACILITY.
+  // Deliberately kept in its own section, separate from "Verified and Authorized" below (the
+  // ILC Provider's own Facility Administrator dual sign-off) so the two are never confused.
+  const testingPersonnelRows = items.map(({round, sub})=>`<tr>
+      <td>${round.sampleId}</td>
+      <td>${sub.personnelTesting || '—'}</td>
+      <td>${sub.personnelVerifying || '—'}</td>
+    </tr>`).join('');
 
   const signedFeedback = items.map(i=>i.sub.feedback).find(f=>f && f.verifiedBy);
 
   return `
     <div style="font-family:Arial,sans-serif; color:#12211F; font-size:10pt;">
-      <style>
-        .pr-table{width:100%; border-collapse:collapse; margin-bottom:10px; font-size:10pt; table-layout:fixed;}
-        .pr-table th, .pr-table td{border:1px solid #999; padding:5px 8px; text-align:center; word-wrap:break-word;}
-        .pr-table thead th{background:#707070; color:#fff; font-weight:600;}
-      </style>
       <table style="width:100%; border-collapse:collapse; margin-bottom:8px;">
         <tr>
           <td style="vertical-align:middle; width:56px;">${coatOfArmsSrc ? `<img src="${coatOfArmsSrc}" style="height:44px; width:auto;">` : ''}</td>
           <td style="vertical-align:middle;">
             <div style="font-weight:bold; font-size:13pt;">Ministry of Health, Zambia</div>
+            <div style="font-size:9pt; color:#555;">Copperbelt Province Interlaboratory Comparison Programme</div>
           </td>
           <td style="text-align:right; vertical-align:middle; font-size:10pt; color:#555;">
             Print date: ${new Date().toLocaleDateString()}<br>
@@ -2408,8 +2327,10 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
       </table>
 
       <table style="width:100%; border-collapse:collapse; margin-bottom:10px; font-size:10pt; border:1px solid #ccc;">
-        <tr style="background:#f2f2f2;"><th style="padding:4px 6px; text-align:left;">Sample</th><th style="padding:4px 6px; text-align:left;">Date Received</th><th style="padding:4px 6px; text-align:left;">Condition</th><th style="padding:4px 6px; text-align:left;">Method / Instrument</th></tr>
-        ${sampleConditionRows}
+        <tr style="background:#f2f2f2;"><td style="padding:4px 6px; width:25%;"><strong>Date Received:</strong> ${conditionSource.dateReceived || '—'}</td>
+        <td style="padding:4px 6px; width:25%;"><strong>Received By:</strong> ${conditionSource.receivedBy || '—'}</td>
+        <td style="padding:4px 6px; width:25%;"><strong>Condition:</strong> ${conditionSource.sampleCondition || '—'}</td>
+        <td style="padding:4px 6px; width:25%;"><strong>Method/Instrument:</strong> ${conditionSource.methodUsed || '—'}</td></tr>
       </table>
 
       ${resultsHtml}
@@ -2418,9 +2339,15 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
         <strong>Overall — Unacceptable Analytes:</strong>
         ${overallHtml}
       </div>
-      ${commentsHtml}
 
-      <p style="margin:14px 0 2px; font-size:8pt;">Reviewed by: ${signedFeedback ? signedFeedback.verifiedBy : '—'}</p>
+      <div style="margin:14px 0 4px; font-size:10pt;"><strong>Testing Personnel</strong></div>
+      <table class="pr-table">
+        <thead><tr><th>Sample ID</th><th>Tested By</th><th>Results Authorized By</th></tr></thead>
+        <tbody>${testingPersonnelRows}</tbody>
+      </table>
+
+      <div style="margin:14px 0 2px; font-size:8pt;"><strong>Verified and Authorized (ILC Provider — Facility Administrators)</strong></div>
+      <p style="margin:2px 0; font-size:8pt;">Reviewed by: ${signedFeedback ? signedFeedback.verifiedBy : '—'}</p>
       ${signedFeedback && signedFeedback.authorizedBy ? `<p style="margin:0; font-size:8pt;">Authorized by: ${signedFeedback.authorizedBy} on ${new Date(signedFeedback.authorizedAt).toLocaleDateString()}</p>` : ''}
 
       <hr style="margin-top:16px;">
@@ -2429,34 +2356,62 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
 }
 // One Performance Report per round package, covering every sample this facility submitted
 // in that round. Landscape + 10pt uniform font is enforced by the @media print CSS.
+// The page title is briefly blanked so the browser's own auto-inserted print header/footer
+// (which shows the page title) doesn't add a second, unstyled "Copperbelt..." line above our
+// own styled report header — restored immediately after the print dialog closes.
 function printFeedbackPackage(pkg, items){
   document.getElementById('printArea').innerHTML = buildFeedbackReportHtml(pkg, items);
+  const originalTitle = document.title;
+  document.title = ' ';
+  const restore = () => { document.title = originalTitle; window.removeEventListener('afterprint', restore); };
+  window.addEventListener('afterprint', restore);
   window.print();
+  setTimeout(restore, 3000); // fallback in case afterprint doesn't fire on this browser
 }
 // Real client-side PDF generation (html2pdf.js) — not dependent on the browser's print
-// dialog or a configured printer driver. Renders the same HTML used for printing, off-screen,
-// then saves it directly as a .pdf file.
+// dialog or a configured printer driver. Renders the same HTML used for printing into a
+// temporary on-screen container (off-screen/negative-offset positioning is a known cause of
+// blank captures in html2canvas — the element must have real, in-viewport coordinates to be
+// painted), covered by an opaque overlay so nothing is visibly disrupted, then removes it.
 function downloadFeedbackPackagePdf(pkg, items){
   const html = buildFeedbackReportHtml(pkg, items);
+  const CAPTURE_WIDTH = 1100;
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed; inset:0; background:#fff; z-index:99998; display:flex; align-items:center; justify-content:center; font-family:Arial,sans-serif; color:#12211F;';
+  overlay.textContent = 'Generating PDF…';
+  document.body.appendChild(overlay);
+
   const container = document.createElement('div');
-  container.style.cssText = 'position:absolute; left:-9999px; top:0; width:1100px; background:#fff;';
+  container.style.cssText = `position:fixed; top:0; left:0; width:${CAPTURE_WIDTH}px; background:#fff; z-index:99999; padding:16px;`;
   container.innerHTML = html;
   document.body.appendChild(container);
+
   const testDef = testById(items[0].round.testId);
   const filenameBase = `${pkg ? pkg.label : 'Performance-Report'} - ${testDef.name}`.replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
-  html2pdf().set({
-    margin: 8,
-    filename: `${filenameBase}.pdf`,
-    image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { scale: 2, useCORS: true },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
-  }).from(container).save().then(()=>{
+
+  const cleanup = () => {
     document.body.removeChild(container);
-  }).catch((e)=>{
-    document.body.removeChild(container);
-    showToast('PDF generation failed: ' + e.message);
-  });
+    document.body.removeChild(overlay);
+  };
+
+  // Wait a frame so layout/fonts/images (the embedded coat-of-arms image) have settled before
+  // html2canvas walks the DOM — capturing immediately after innerHTML assignment is another
+  // common cause of a blank/incomplete render.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    html2pdf().set({
+      margin: 8,
+      filename: `${filenameBase}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, windowWidth: CAPTURE_WIDTH, width: CAPTURE_WIDTH },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
+    }).from(container).save().then(cleanup).catch((e)=>{
+      cleanup();
+      showToast('PDF generation failed: ' + e.message);
+    });
+  }));
 }
+
 
 
 

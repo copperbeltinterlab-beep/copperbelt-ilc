@@ -24,6 +24,7 @@ function camel(s) {
     dateReceived: s.date_received,
     methodUsed: s.method_used,
     sampleCondition: s.sample_condition,
+    receivedBy: s.received_by,
     sampleAcceptability: s.sample_acceptability,
     sampleRejectionReason: s.sample_rejection_reason,
     resultStatus: s.result_status,
@@ -94,51 +95,42 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
   }
 
   const {
-    dateReceived, methodUsed, sampleCondition,
-    sampleAcceptability, sampleRejectionReason,
+    dateReceived, methodUsed, sampleCondition, receivedBy,
     personnelTesting, personnelVerifying, finalize,
   } = req.body;
-  // A rejected sample was never tested — never trust the client to have left the result
-  // object empty; a rejected sample can never carry result data no matter what is sent.
-  const result = sampleAcceptability === 'rejected' ? {} : req.body.result;
+  const result = req.body.result;
 
   if (finalize) {
     if (!personnelTesting || !personnelVerifying) {
-      return res.status(400).json({ error: 'Enter both tested-by and verified-by names before final submission.' });
+      return res.status(400).json({ error: 'Enter both tested-by and results-authorized-by names before final submission.' });
     }
     if (!dateReceived) {
       return res.status(400).json({ error: 'Date sample received is required before final submission.' });
     }
     if (!methodUsed || !methodUsed.trim()) {
-      return res.status(400).json({ error: 'Method used is required before final submission.' });
+      return res.status(400).json({ error: 'Method/instrument used is required before final submission.' });
     }
     if (!sampleCondition || !sampleCondition.trim()) {
-      return res.status(400).json({ error: 'Notes on sample condition are required before final submission.' });
+      return res.status(400).json({ error: 'Sample Condition is required before final submission.' });
     }
-    if (!['accepted', 'rejected'].includes(sampleAcceptability)) {
-      return res.status(400).json({ error: 'Indicate whether the sample was accepted or rejected on receipt.' });
-    }
-    if (sampleAcceptability === 'rejected' && !(sampleRejectionReason || '').trim()) {
-      return res.status(400).json({ error: 'A reason is required when a sample is rejected.' });
+    if (!receivedBy || !receivedBy.trim()) {
+      return res.status(400).json({ error: 'Received By is required before final submission.' });
     }
     // Every required analyte slot must be filled — either a real value, or validly marked
-    // Test Not Performed — before an accepted sample can be finalized. A rejected sample has
-    // no analyte slots to fill at all, so this only applies when accepted.
-    if (sampleAcceptability === 'accepted') {
-      const testDef = getTestDef(round.test_id);
-      const missingLabels = [];
-      if (testDef) {
-        for (const key of testDef.fields) {
-          const raw = result ? result[key] : undefined;
-          const hasValue = raw && typeof raw === 'object'
-            ? (raw.notPerformed ? true : (raw.value !== null && raw.value !== undefined && raw.value !== ''))
-            : (raw !== null && raw !== undefined && raw !== '');
-          if (!hasValue) missingLabels.push(key);
-        }
+    // Test Not Performed — before this sample can be finalized.
+    const testDef = getTestDef(round.test_id);
+    const missingLabels = [];
+    if (testDef) {
+      for (const key of testDef.fields) {
+        const raw = result ? result[key] : undefined;
+        const hasValue = raw && typeof raw === 'object'
+          ? (raw.notPerformed ? true : (raw.value !== null && raw.value !== undefined && raw.value !== ''))
+          : (raw !== null && raw !== undefined && raw !== '');
+        if (!hasValue) missingLabels.push(key);
       }
-      if (missingLabels.length) {
-        return res.status(400).json({ error: `Every result slot is required before submitting. Missing: ${missingLabels.join(', ')}.` });
-      }
+    }
+    if (missingLabels.length) {
+      return res.status(400).json({ error: `Every result slot is required before submitting. Missing: ${missingLabels.join(', ')}.` });
     }
   }
 
@@ -165,29 +157,26 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
   }
 
   // Derive an internal reported/not_performed summary (used for consensus/statistics later) —
-  // this is computed automatically, never chosen directly by the lab, and is not shown as a
-  // separate sample-wide control in the UI.
+  // this is computed automatically, never chosen directly by the lab.
   const hasAnyRealValue = Object.values(normalizedResult).some(v => {
     if (v && typeof v === 'object') return v.value !== null && v.value !== undefined && v.value !== '' && !v.notPerformed;
     return v !== null && v !== undefined && v !== '';
   });
-  const derivedResultStatus = (sampleAcceptability === 'rejected' || !hasAnyRealValue) ? 'not_performed' : 'reported';
+  const derivedResultStatus = hasAnyRealValue ? 'reported' : 'not_performed';
 
   const status = finalize ? 'submitted' : 'draft';
   const submittedAt = finalize ? new Date().toISOString() : (existing ? existing.submitted_at : null);
 
   const { rows } = await pool.query(
     `insert into submissions
-       (round_id, facility_id, date_received, method_used, sample_condition,
-        sample_acceptability, sample_rejection_reason, result_status,
-        result, personnel_testing, personnel_verifying, status, saved_at, submitted_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now(), $13)
+       (round_id, facility_id, date_received, method_used, sample_condition, received_by,
+        result_status, result, personnel_testing, personnel_verifying, status, saved_at, submitted_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now(), $12)
      on conflict (round_id, facility_id) do update set
        date_received = excluded.date_received,
        method_used = excluded.method_used,
        sample_condition = excluded.sample_condition,
-       sample_acceptability = excluded.sample_acceptability,
-       sample_rejection_reason = excluded.sample_rejection_reason,
+       received_by = excluded.received_by,
        result_status = excluded.result_status,
        result = excluded.result,
        personnel_testing = excluded.personnel_testing,
@@ -197,7 +186,7 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
        submitted_at = excluded.submitted_at
      returning *`,
     [req.params.roundId, req.user.facilityId, dateReceived || null, methodUsed || null,
-     sampleCondition || null, sampleAcceptability || null, sampleRejectionReason || null,
+     sampleCondition || null, receivedBy || null,
      derivedResultStatus, normalizedResult, personnelTesting || null, personnelVerifying || null,
      status, submittedAt]
   );

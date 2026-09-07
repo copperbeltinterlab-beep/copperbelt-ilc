@@ -91,6 +91,7 @@ function camelSubmission(s) {
   return {
     id: s.id, roundId: s.round_id, facilityId: s.facility_id,
     dateReceived: s.date_received, methodUsed: s.method_used, sampleCondition: s.sample_condition,
+    receivedBy: s.received_by,
     sampleAcceptability: s.sample_acceptability, sampleRejectionReason: s.sample_rejection_reason,
     result: s.result, personnelTesting: s.personnel_testing, personnelVerifying: s.personnel_verifying,
     status: s.status, submittedAt: s.submitted_at, feedback: s.feedback,
@@ -121,7 +122,6 @@ router.get('/:id/submissions/mine', requireAuth, requireRole('user'), async (req
 router.post('/', requireAuth, requireRole('facilityadmin'), upload.single('instructionsFile'), async (req, res) => {
   const { testId, deadline, participationMode } = req.body;
   const year = Number(req.body.year);
-  const roundNumber = Number(req.body.roundNumber);
   let sampleIds;
   try {
     sampleIds = JSON.parse(req.body.sampleIds);
@@ -132,9 +132,6 @@ router.post('/', requireAuth, requireRole('facilityadmin'), upload.single('instr
   if (!testId || !deadline) return res.status(400).json({ error: 'Test and deadline are required.' });
   if (!Number.isInteger(year) || year < MIN_YEAR || year > MAX_YEAR) {
     return res.status(400).json({ error: 'Select a valid ILC year.' });
-  }
-  if (!Number.isInteger(roundNumber) || roundNumber < 1 || roundNumber > 10) {
-    return res.status(400).json({ error: 'Select a round number (1-10).' });
   }
   if (!req.file) return res.status(400).json({ error: 'An instructions file attachment is required.' });
   if (!Array.isArray(sampleIds) || sampleIds.length < 2 || sampleIds.length > 5) {
@@ -157,29 +154,39 @@ router.post('/', requireAuth, requireRole('facilityadmin'), upload.single('instr
     }
   }
 
-  const { rows: dupe } = await pool.query(
-    'select id from round_packages where year = $1 and round_number = $2 and test_id = $3',
-    [year, roundNumber, testId]
-  );
-  if (dupe.length) {
-    return res.status(409).json({ error: `Round ${roundNumber} of ${year} already exists for this test.` });
-  }
-
   const fileName = req.file.originalname;
   const fileType = req.file.mimetype;
   const fileData = req.file.buffer.toString('base64');
   const participantJson = participantFacilityIds ? JSON.stringify(participantFacilityIds) : null;
 
-  const { rows: pkgRows } = await pool.query(
-    `insert into round_packages
-       (test_id, year, round_number, providing_facility_id, deadline,
-        instructions_file_name, instructions_file_type, instructions_file_data,
-        participation_mode, participant_facility_ids, status, created_by)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'active',$11) returning *`,
-    [testId, year, roundNumber, req.user.facilityId, deadline, fileName, fileType, fileData,
-     mode, participantJson, req.user.id]
-  );
-  const pkg = pkgRows[0];
+  // Round Number is tracked per test, per year, and assigned automatically — never chosen
+  // manually. A new year restarts at 1 for that test since the MAX query is scoped to it.
+  // Retried once on a rare concurrent-create collision (the DB's unique constraint is the
+  // real guard; this just makes a same-instant double-click resolve cleanly instead of 409ing).
+  let pkg;
+  for (let attempt = 0; attempt < 2 && !pkg; attempt++) {
+    const { rows: maxRows } = await pool.query(
+      'select coalesce(max(round_number), 0) + 1 as next_number from round_packages where test_id = $1 and year = $2',
+      [testId, year]
+    );
+    const roundNumber = maxRows[0].next_number;
+    try {
+      const { rows: pkgRows } = await pool.query(
+        `insert into round_packages
+           (test_id, year, round_number, providing_facility_id, deadline,
+            instructions_file_name, instructions_file_type, instructions_file_data,
+            participation_mode, participant_facility_ids, status, created_by)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'active',$11) returning *`,
+        [testId, year, roundNumber, req.user.facilityId, deadline, fileName, fileType, fileData,
+         mode, participantJson, req.user.id]
+      );
+      pkg = pkgRows[0];
+    } catch (e) {
+      if (e.code === '23505' && attempt === 0) continue; // unique_violation — someone else just took this number, retry once
+      throw e;
+    }
+  }
+  if (!pkg) return res.status(409).json({ error: 'Could not assign a round number — please try again.' });
 
   const createdSamples = [];
   for (const sampleId of sampleIds) {
