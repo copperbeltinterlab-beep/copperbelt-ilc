@@ -90,7 +90,7 @@ router.get('/:id/instructions-file', requireAuth, async (req, res) => {
 function camelSubmission(s) {
   return {
     id: s.id, roundId: s.round_id, facilityId: s.facility_id,
-    dateReceived: s.date_received, methodUsed: s.method_used, sampleCondition: s.sample_condition,
+    dateReceived: toDateOnly(s.date_received), methodUsed: s.method_used, sampleCondition: s.sample_condition,
     receivedBy: s.received_by,
     sampleAcceptability: s.sample_acceptability, sampleRejectionReason: s.sample_rejection_reason,
     result: s.result, personnelTesting: s.personnel_testing, personnelVerifying: s.personnel_verifying,

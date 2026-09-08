@@ -2420,7 +2420,7 @@ function downloadFeedbackPackagePdf(pkg, items){
   // causes of html2canvas silently producing a blank canvas via its clone-into-iframe
   // rendering process. A static element is the reliable, standard pattern.
   const container = document.createElement('div');
-  container.style.cssText = `width:${CAPTURE_WIDTH}px; background:#fff; padding:16px;`;
+  container.style.cssText = `width:${CAPTURE_WIDTH}px; background:#fff; padding:16px; box-sizing:border-box;`;
   container.innerHTML = html;
   document.body.appendChild(container);
 
@@ -2435,12 +2435,24 @@ function downloadFeedbackPackagePdf(pkg, items){
   // Wait a couple of frames so layout/fonts/images (the embedded coat-of-arms image) have
   // settled before html2canvas walks the DOM.
   requestAnimationFrame(() => requestAnimationFrame(() => {
+    // Size the PDF page to exactly match the rendered content in pixels, converted to mm at
+    // 96 DPI. This is what actually fixes the right-edge cutoff: fitting our wide tables into
+    // a fixed A4 page requires html2pdf to scale the canvas down, and that scale step was
+    // clipping content instead of shrinking it. A custom page sized to the content needs no
+    // scaling at all, so nothing can be cut off no matter how wide a table gets.
+    const PX_TO_MM = 25.4 / 96;
+    const contentWidthPx = Math.max(container.scrollWidth, CAPTURE_WIDTH);
+    const contentHeightPx = container.scrollHeight;
+    const pageWidthMM = contentWidthPx * PX_TO_MM;
+    const pageHeightMM = contentHeightPx * PX_TO_MM;
+
     html2pdf().set({
-      margin: 8,
+      margin: 0,
       filename: `${filenameBase}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
+      html2canvas: { scale: 2, useCORS: true, windowWidth: CAPTURE_WIDTH },
+      jsPDF: { unit: 'mm', format: [pageWidthMM, pageHeightMM], orientation: 'landscape' },
+      pagebreak: { mode: 'avoid-all' },
     }).from(container).save().then(cleanup).catch((e)=>{
       cleanup();
       showToast('PDF generation failed: ' + e.message);

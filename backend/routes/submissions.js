@@ -4,7 +4,7 @@ const { buildConsensusReport } = require('../consensus');
 const { getTestName, getTestDef, NOT_PERFORMED_REASONS } = require('../testDefinitions');
 const { sendFeedbackReleasedEmail, sendFollowUpQueryEmail } = require('../email');
 const { isEligibleParticipant } = require('../participation');
-const { computeStatus } = require('../roundPackageStatus');
+const { computeStatus, toDateOnly } = require('../roundPackageStatus');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
@@ -21,7 +21,7 @@ function camel(s) {
     id: s.id,
     roundId: s.round_id,
     facilityId: s.facility_id,
-    dateReceived: s.date_received,
+    dateReceived: toDateOnly(s.date_received),
     methodUsed: s.method_used,
     sampleCondition: s.sample_condition,
     receivedBy: s.received_by,
