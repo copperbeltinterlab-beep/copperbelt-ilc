@@ -96,14 +96,14 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
 
   const {
     dateReceived, methodUsed, sampleCondition, receivedBy,
+    sampleAcceptability, sampleRejectionReason,
     personnelTesting, personnelVerifying, finalize,
   } = req.body;
-  const result = req.body.result;
+  // A rejected sample was never tested — never trust the client to have left the result
+  // object empty; a rejected sample can never carry result data no matter what is sent.
+  const result = sampleAcceptability === 'rejected' ? {} : req.body.result;
 
   if (finalize) {
-    if (!personnelTesting || !personnelVerifying) {
-      return res.status(400).json({ error: 'Enter both tested-by and results-authorized-by names before final submission.' });
-    }
     if (!dateReceived) {
       return res.status(400).json({ error: 'Date sample received is required before final submission.' });
     }
@@ -111,26 +111,37 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
       return res.status(400).json({ error: 'Method/instrument used is required before final submission.' });
     }
     if (!sampleCondition || !sampleCondition.trim()) {
-      return res.status(400).json({ error: 'Sample Condition is required before final submission.' });
+      return res.status(400).json({ error: 'Sample Receipt: Condition is required before final submission.' });
     }
     if (!receivedBy || !receivedBy.trim()) {
       return res.status(400).json({ error: 'Received By is required before final submission.' });
     }
-    // Every required analyte slot must be filled — either a real value, or validly marked
-    // Test Not Performed — before this sample can be finalized.
-    const testDef = getTestDef(round.test_id);
-    const missingLabels = [];
-    if (testDef) {
-      for (const key of testDef.fields) {
-        const raw = result ? result[key] : undefined;
-        const hasValue = raw && typeof raw === 'object'
-          ? (raw.notPerformed ? true : (raw.value !== null && raw.value !== undefined && raw.value !== ''))
-          : (raw !== null && raw !== undefined && raw !== '');
-        if (!hasValue) missingLabels.push(key);
-      }
+    if (!['accepted', 'rejected'].includes(sampleAcceptability)) {
+      return res.status(400).json({ error: 'Indicate whether the sample was accepted or rejected before results can be submitted.' });
     }
-    if (missingLabels.length) {
-      return res.status(400).json({ error: `Every result slot is required before submitting. Missing: ${missingLabels.join(', ')}.` });
+    if (sampleAcceptability === 'rejected' && !(sampleRejectionReason || '').trim()) {
+      return res.status(400).json({ error: 'A reason is required when a sample is rejected.' });
+    }
+    // A rejected sample has no analytes to test — the mandatory-slots check only applies once
+    // the sample has actually been accepted for testing.
+    if (sampleAcceptability === 'accepted') {
+      if (!personnelTesting || !personnelVerifying) {
+        return res.status(400).json({ error: 'Enter both tested-by and results-authorized-by names before final submission.' });
+      }
+      const testDef = getTestDef(round.test_id);
+      const missingLabels = [];
+      if (testDef) {
+        for (const key of testDef.fields) {
+          const raw = result ? result[key] : undefined;
+          const hasValue = raw && typeof raw === 'object'
+            ? (raw.notPerformed ? true : (raw.value !== null && raw.value !== undefined && raw.value !== ''))
+            : (raw !== null && raw !== undefined && raw !== '');
+          if (!hasValue) missingLabels.push(key);
+        }
+      }
+      if (missingLabels.length) {
+        return res.status(400).json({ error: `Every result slot is required before submitting. Missing: ${missingLabels.join(', ')}.` });
+      }
     }
   }
 
@@ -162,7 +173,7 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
     if (v && typeof v === 'object') return v.value !== null && v.value !== undefined && v.value !== '' && !v.notPerformed;
     return v !== null && v !== undefined && v !== '';
   });
-  const derivedResultStatus = hasAnyRealValue ? 'reported' : 'not_performed';
+  const derivedResultStatus = (sampleAcceptability === 'rejected' || !hasAnyRealValue) ? 'not_performed' : 'reported';
 
   const status = finalize ? 'submitted' : 'draft';
   const submittedAt = finalize ? new Date().toISOString() : (existing ? existing.submitted_at : null);
@@ -170,13 +181,16 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
   const { rows } = await pool.query(
     `insert into submissions
        (round_id, facility_id, date_received, method_used, sample_condition, received_by,
+        sample_acceptability, sample_rejection_reason,
         result_status, result, personnel_testing, personnel_verifying, status, saved_at, submitted_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now(), $12)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now(), $14)
      on conflict (round_id, facility_id) do update set
        date_received = excluded.date_received,
        method_used = excluded.method_used,
        sample_condition = excluded.sample_condition,
        received_by = excluded.received_by,
+       sample_acceptability = excluded.sample_acceptability,
+       sample_rejection_reason = excluded.sample_rejection_reason,
        result_status = excluded.result_status,
        result = excluded.result,
        personnel_testing = excluded.personnel_testing,
@@ -186,7 +200,7 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
        submitted_at = excluded.submitted_at
      returning *`,
     [req.params.roundId, req.user.facilityId, dateReceived || null, methodUsed || null,
-     sampleCondition || null, receivedBy || null,
+     sampleCondition || null, receivedBy || null, sampleAcceptability || null, sampleRejectionReason || null,
      derivedResultStatus, normalizedResult, personnelTesting || null, personnelVerifying || null,
      status, submittedAt]
   );

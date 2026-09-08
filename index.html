@@ -571,7 +571,7 @@
         <div class="card" id="packageInfoCard"></div>
 
         <div class="card" id="sharedConditionsCard">
-          <h3 class="fieldset-title" style="margin-top:0;">Sample Condition</h3>
+          <h3 class="fieldset-title" style="margin-top:0;">Sample Receipt</h3>
           <div class="note" style="margin-bottom:10px;">Captured once for every sample in this round — all samples arrive and are logged together.</div>
           <div class="row2">
             <div><label>Date Received *</label><input type="date" id="sharedDateReceived"></div>
@@ -1872,9 +1872,12 @@ function wireNotPerformedCheckboxes(container){
 
 function renderSamplePanelHtml(pkg, sample, mine, expanded){
   const locked = mine && mine.status === 'submitted';
+  const rejected = mine ? mine.sampleAcceptability === 'rejected' : false;
   const statusBadge = locked
     ? { text:'Submitted', bg:'#e3f3ea', fg:'#0d3b30' }
-    : { text:'Incomplete', bg:'#fff3c4', fg:'#7a5b00' };
+    : rejected
+      ? { text:'Rejected', bg:'#fde2e2', fg:'#8a1f1f' }
+      : { text:'Incomplete', bg:'#fff3c4', fg:'#7a5b00' };
   return `
   <div class="card sample-panel" data-round="${sample.id}">
     <div class="row-item sample-panel-header" data-round="${sample.id}" style="cursor:pointer; border:none; padding-top:0;">
@@ -1882,22 +1885,39 @@ function renderSamplePanelHtml(pkg, sample, mine, expanded){
       <span class="badge" data-status-badge="${sample.id}" style="background:${statusBadge.bg}; color:${statusBadge.fg};">${statusBadge.text}</span>
     </div>
     <div class="sample-panel-body" data-round="${sample.id}" style="display:${expanded?'block':'none'};">
-      <h4 class="fieldset-title" style="margin-top:0;">Result</h4>
-      <div class="p-dynamic-fields">${dynamicFieldsHtml(pkg.testId, mine?.result)}</div>
-      <h4 class="fieldset-title">Personnel</h4>
-      <div class="row2">
-        <div><label>Tested By *</label><input type="text" class="p-personnel-testing" value="${mine?.personnelTesting || ''}"></div>
-        <div><label>Results Authorized By *</label><input type="text" class="p-personnel-verifying" value="${mine?.personnelVerifying || ''}"></div>
+      <h4 class="fieldset-title" style="margin-top:0;">Sample Acceptability *</h4>
+      <div style="display:flex; gap:24px; align-items:center; margin-bottom:8px;">
+        <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="acceptability_${sample.id}" class="p-accepted" ${mine?.sampleAcceptability==='accepted'?'checked':''}><span>Accepted</span></label>
+        <label style="font-weight:400; display:inline-flex; align-items:center; gap:6px; margin:0;"><input type="radio" name="acceptability_${sample.id}" class="p-rejected" ${mine?.sampleAcceptability==='rejected'?'checked':''}><span>Rejected</span></label>
+      </div>
+      <div class="p-rejection-reason-wrap" style="display:${rejected?'block':'none'};">
+        <label>Reason for rejection *</label>
+        <textarea class="p-rejection-reason">${mine?.sampleRejectionReason || ''}</textarea>
+      </div>
+      <div class="p-results-personnel-wrap" style="display:${rejected?'none':'block'};">
+        <h4 class="fieldset-title">Result</h4>
+        <div class="p-dynamic-fields">${dynamicFieldsHtml(pkg.testId, mine?.result)}</div>
+        <h4 class="fieldset-title">Personnel</h4>
+        <div class="row2">
+          <div><label>Tested By *</label><input type="text" class="p-personnel-testing" value="${mine?.personnelTesting || ''}"></div>
+          <div><label>Results Authorized By *</label><input type="text" class="p-personnel-verifying" value="${mine?.personnelVerifying || ''}"></div>
+        </div>
       </div>
       ${locked ? '<div class="meta" style="margin-top:8px; color:#0d3b30;">✓ Submitted — locked, can no longer be edited.</div>' : ''}
     </div>
   </div>`;
+}
+function togglePanelRejection(container){
+  const rejected = container.querySelector('.p-rejected').checked;
+  container.querySelector('.p-rejection-reason-wrap').style.display = rejected ? 'block' : 'none';
+  container.querySelector('.p-results-personnel-wrap').style.display = rejected ? 'none' : 'block';
 }
 function updatePanelStatus(pkg, sample, container){
   const badge = document.querySelector(`[data-status-badge="${sample.id}"]`);
   if(!badge) return;
   const mine = MY_PACKAGE_SUBMISSIONS[sample.id];
   if(mine && mine.status==='submitted'){ badge.textContent='Submitted'; badge.style.background='#e3f3ea'; badge.style.color='#0d3b30'; return; }
+  if(container.querySelector('.p-rejected').checked){ badge.textContent='Rejected'; badge.style.background='#fde2e2'; badge.style.color='#8a1f1f'; return; }
   const missing = missingNotPerformedReasons(pkg.testId, container);
   const ready = missing.length===0;
   badge.textContent = ready ? 'Ready' : 'Incomplete';
@@ -1908,6 +1928,8 @@ function wireSamplePanel(pkg, sample, container){
   const mine = MY_PACKAGE_SUBMISSIONS[sample.id];
   const locked = mine && mine.status === 'submitted';
   wireNotPerformedCheckboxes(container);
+  container.querySelector('.p-accepted').addEventListener('change', ()=>{ togglePanelRejection(container); updatePanelStatus(pkg, sample, container); });
+  container.querySelector('.p-rejected').addEventListener('change', ()=>{ togglePanelRejection(container); updatePanelStatus(pkg, sample, container); });
   container.addEventListener('input', ()=>updatePanelStatus(pkg, sample, container));
   container.addEventListener('change', ()=>updatePanelStatus(pkg, sample, container));
   if(locked){
@@ -1982,33 +2004,41 @@ function collectSamplePayload(pkg, sample, container, finalize){
   const receivedBy = document.getElementById('sharedReceivedBy').value;
   const sampleCondition = document.getElementById('sharedSampleCondition').value;
   const methodUsed = document.getElementById('sharedMethodUsed').value;
+  const accepted = container.querySelector('.p-accepted').checked;
+  const rejected = container.querySelector('.p-rejected').checked;
+  const sampleAcceptability = accepted ? 'accepted' : rejected ? 'rejected' : null;
+  const sampleRejectionReason = container.querySelector('.p-rejection-reason').value;
   const personnelTesting = container.querySelector('.p-personnel-testing').value;
   const personnelVerifying = container.querySelector('.p-personnel-verifying').value;
 
   const errors = [];
-  const result = collectResult(pkg.testId, container);
+  const result = sampleAcceptability === 'rejected' ? {} : collectResult(pkg.testId, container);
 
   if(finalize){
-    if(!dateReceived) errors.push('Sample Condition: Date Received is required.');
-    if(!receivedBy || !receivedBy.trim()) errors.push('Sample Condition: Received By is required.');
-    if(!sampleCondition || !sampleCondition.trim()) errors.push('Sample Condition: Condition is required.');
-    if(!methodUsed || !methodUsed.trim()) errors.push('Sample Condition: Method/Instrument is required.');
-    if(!personnelTesting || !personnelVerifying) errors.push(`Sample ${sample.sampleId}: Tested By and Results Authorized By names are required.`);
-    const missingReasons = missingNotPerformedReasons(pkg.testId, container);
-    if(missingReasons.length) errors.push(`Sample ${sample.sampleId}: select a reason for "Test Not Performed" — ${missingReasons.join(', ')}.`);
-    const testDef = testById(pkg.testId);
-    const missingSlots = testDef.fields.filter(f=>{
-      const fs = result[f.key];
-      if(!fs) return true;
-      if(fs.notPerformed) return false; // already covered by missingReasons above
-      return fs.value === null || fs.value === undefined || fs.value === '';
-    });
-    if(missingSlots.length) errors.push(`Sample ${sample.sampleId}: every result slot is required — missing ${missingSlots.map(f=>f.label).join(', ')}.`);
+    if(!dateReceived) errors.push('Sample Receipt: Date Received is required.');
+    if(!receivedBy || !receivedBy.trim()) errors.push('Sample Receipt: Received By is required.');
+    if(!sampleCondition || !sampleCondition.trim()) errors.push('Sample Receipt: Condition is required.');
+    if(!methodUsed || !methodUsed.trim()) errors.push('Sample Receipt: Method/Instrument is required.');
+    if(!sampleAcceptability) errors.push(`Sample ${sample.sampleId}: indicate accepted or rejected.`);
+    if(sampleAcceptability==='rejected' && !(sampleRejectionReason||'').trim()) errors.push(`Sample ${sample.sampleId}: reason for rejection is required.`);
+    if(sampleAcceptability === 'accepted'){
+      if(!personnelTesting || !personnelVerifying) errors.push(`Sample ${sample.sampleId}: Tested By and Results Authorized By names are required.`);
+      const missingReasons = missingNotPerformedReasons(pkg.testId, container);
+      if(missingReasons.length) errors.push(`Sample ${sample.sampleId}: select a reason for "Test Not Performed" — ${missingReasons.join(', ')}.`);
+      const testDef = testById(pkg.testId);
+      const missingSlots = testDef.fields.filter(f=>{
+        const fs = result[f.key];
+        if(!fs) return true;
+        if(fs.notPerformed) return false; // already covered by missingReasons above
+        return fs.value === null || fs.value === undefined || fs.value === '';
+      });
+      if(missingSlots.length) errors.push(`Sample ${sample.sampleId}: every result slot is required — missing ${missingSlots.map(f=>f.label).join(', ')}.`);
+    }
   }
 
   return {
     errors,
-    payload: { dateReceived, receivedBy, sampleCondition, methodUsed, result, personnelTesting, personnelVerifying, finalize },
+    payload: { dateReceived, receivedBy, sampleCondition, methodUsed, sampleAcceptability, sampleRejectionReason, result, personnelTesting, personnelVerifying, finalize },
   };
 }
 
@@ -2377,13 +2407,20 @@ function downloadFeedbackPackagePdf(pkg, items){
   const html = buildFeedbackReportHtml(pkg, items);
   const CAPTURE_WIDTH = 1100;
 
+  // Fixed, full-viewport, purely visual — masks the brief flash while the real capture
+  // target renders. This element is NOT what gets captured, so its positioning doesn't
+  // matter for the PDF output.
   const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed; inset:0; background:#fff; z-index:99998; display:flex; align-items:center; justify-content:center; font-family:Arial,sans-serif; color:#12211F;';
+  overlay.style.cssText = 'position:fixed; inset:0; background:#fff; z-index:2147483647; display:flex; align-items:center; justify-content:center; font-family:Arial,sans-serif; color:#12211F;';
   overlay.textContent = 'Generating PDF…';
   document.body.appendChild(overlay);
 
+  // The actual capture target: a plain, normally-flowing element appended to body — no
+  // position:fixed/absolute and no off-screen negative offsets. Both are well-documented
+  // causes of html2canvas silently producing a blank canvas via its clone-into-iframe
+  // rendering process. A static element is the reliable, standard pattern.
   const container = document.createElement('div');
-  container.style.cssText = `position:fixed; top:0; left:0; width:${CAPTURE_WIDTH}px; background:#fff; z-index:99999; padding:16px;`;
+  container.style.cssText = `width:${CAPTURE_WIDTH}px; background:#fff; padding:16px;`;
   container.innerHTML = html;
   document.body.appendChild(container);
 
@@ -2395,15 +2432,14 @@ function downloadFeedbackPackagePdf(pkg, items){
     document.body.removeChild(overlay);
   };
 
-  // Wait a frame so layout/fonts/images (the embedded coat-of-arms image) have settled before
-  // html2canvas walks the DOM — capturing immediately after innerHTML assignment is another
-  // common cause of a blank/incomplete render.
+  // Wait a couple of frames so layout/fonts/images (the embedded coat-of-arms image) have
+  // settled before html2canvas walks the DOM.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     html2pdf().set({
       margin: 8,
       filename: `${filenameBase}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, windowWidth: CAPTURE_WIDTH, width: CAPTURE_WIDTH },
+      html2canvas: { scale: 2, useCORS: true },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
     }).from(container).save().then(cleanup).catch((e)=>{
       cleanup();
