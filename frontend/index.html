@@ -2208,7 +2208,7 @@ function acceptabilityCell(status){
     pending: {label:'Pending release', bg:'#fff3c4', fg:'#7a5b00'},
   };
   const m = map[status] || map.not_evaluated;
-  return `<td style="border:1px solid #555;padding:4px 5px;text-align:center;background:${m.bg};color:${m.fg};font-weight:600;">${m.label}</td>`;
+  return `<td style="background:${m.bg}; color:${m.fg}; font-weight:600;">${m.label}</td>`;
 }
 // One table per analyte field, one row per sample (sorted lowest-to-highest sample ID) —
 // matches the qualitative report template, including the separate ABO / Rhesus / Saline /
@@ -2236,25 +2236,18 @@ function qualitativeFieldTable(field, items){
       }
     }
     return `<tr>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${round.sampleId}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${resultText}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${acceptableResult}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${noOfLabs}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${consensusText}</td>
+      <td>${round.sampleId}</td>
+      <td>${resultText}</td>
+      <td>${acceptableResult}</td>
+      <td>${noOfLabs}</td>
+      <td>${consensusText}</td>
       ${acceptabilityCell(status)}
     </tr>`;
   }).join('');
   return `<div class="fieldset-title" style="margin:14px 0 4px; font-size:10pt;">${field.label}</div>
-    <table class="pr-table" style="width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:10px;font-size:9pt;">
+    <table class="pr-table">
       <colgroup><col style="width:14%;"><col style="width:18%;"><col style="width:18%;"><col style="width:12%;"><col style="width:26%;"><col style="width:12%;"></colgroup>
-      <thead><tr>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Sample ID</th>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Your Result</th>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Acceptable Result</th>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">No of Labs</th>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Consensus</th>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Acceptability</th>
-      </tr></thead>
+      <thead><tr><th>Sample ID</th><th>Your Result</th><th>Acceptable Result</th><th>No of Labs</th><th>Consensus</th><th>Acceptability</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>`;
 }
@@ -2278,31 +2271,11 @@ function quantitativeSampleSection(round, sub, testDef){
       grade = gradeLabel(fEval.status);
       n = (stat && typeof stat.n==='number') ? stat.n : '—';
     }
-    return `<tr>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${a.label}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${resultText}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${grade}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${n}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${mean}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${sd}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${sdi}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${range}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">Peer Group Mean ± 2 SD</td>
-    </tr>`;
+    return `<tr><td>${a.label}</td><td>${resultText}</td><td>${grade}</td><td>${n}</td><td>${mean}</td><td>${sd}</td><td>${sdi}</td><td>${range}</td><td>Peer Group Mean ± 2 SD</td></tr>`;
   }).join('');
   return `<div class="fieldset-title" style="margin:14px 0 4px; font-size:10pt;">Sample ${round.sampleId}</div>
-    <table class="pr-table" style="width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:10px;font-size:9pt;">
-      <thead><tr>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Analyte</th>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Result</th>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Grade</th>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Peer Group N</th>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Mean</th>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">SD</th>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">SDI</th>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Acceptable Range</th>
-        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Evaluation Criteria</th>
-      </tr></thead>
+    <table class="pr-table">
+      <thead><tr><th>Analyte</th><th>Result</th><th>Grade</th><th>Peer Group N</th><th>Mean</th><th>SD</th><th>SDI</th><th>Acceptable Range</th><th>Evaluation Criteria</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>`;
 }
@@ -2349,9 +2322,9 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
   // Deliberately kept in its own section, separate from "Verified and Authorized" below (the
   // ILC Provider's own Facility Administrator dual sign-off) so the two are never confused.
   const testingPersonnelRows = items.map(({round, sub})=>`<tr>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${round.sampleId}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${sub.personnelTesting || '—'}</td>
-      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${sub.personnelVerifying || '—'}</td>
+      <td>${round.sampleId}</td>
+      <td>${sub.personnelTesting || '—'}</td>
+      <td>${sub.personnelVerifying || '—'}</td>
     </tr>`).join('');
 
   const signedFeedback = items.map(i=>i.sub.feedback).find(f=>f && f.verifiedBy);
@@ -2399,12 +2372,8 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
       </div>
 
       <div style="margin:14px 0 4px; font-size:10pt;"><strong>Testing Personnel</strong></div>
-      <table class="pr-table" style="width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:10px;font-size:9pt;">
-        <thead><tr>
-          <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Sample ID</th>
-          <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Tested By</th>
-          <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Results Authorized By</th>
-        </tr></thead>
+      <table class="pr-table">
+        <thead><tr><th>Sample ID</th><th>Tested By</th><th>Results Authorized By</th></tr></thead>
         <tbody>${testingPersonnelRows}</tbody>
       </table>
 
@@ -2413,7 +2382,8 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
       ${signedFeedback && signedFeedback.authorizedBy ? `<p style="margin:0; font-size:8pt;">Authorized by: ${signedFeedback.authorizedBy} on ${new Date(signedFeedback.authorizedAt).toLocaleDateString()}</p>` : ''}
 
       <hr style="margin-top:16px;">
-      <p style="font-size:8pt; color:#777;">Report prepared by the Ministry of Health, Zambia.</p>
+      <p style="font-size:8pt; color:#777; margin:0;">Report prepared by the Ministry of Health, Zambia.</p>
+      <p style="font-size:8pt; color:#777; margin:2px 0 0;">Copperbelt Province Interlaboratory Programme</p>
     </div>`;
 }
 // One Performance Report per round package, covering every sample this facility submitted
@@ -2437,7 +2407,6 @@ function printFeedbackPackage(pkg, items){
 // painted), covered by an opaque overlay so nothing is visibly disrupted, then removes it.
 function ensureHtml2Pdf(){
   if (typeof html2pdf === 'function') return Promise.resolve();
-  // CDN may have failed (blocked, offline, CSP). Load from primary then fallback.
   const urls = [
     'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js',
     'https://unpkg.com/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js',
@@ -2456,7 +2425,6 @@ function ensureHtml2Pdf(){
       if (existing) {
         existing.addEventListener('load', () => tryNext());
         existing.addEventListener('error', () => tryNext());
-        // If already complete, advance
         setTimeout(tryNext, 50);
         return;
       }
@@ -2473,7 +2441,6 @@ function ensureHtml2Pdf(){
 }
 
 function downloadFeedbackPackagePdf(pkg, items){
-  // Self-contained report + A4 landscape. Dynamically load html2pdf if the page script tag failed.
   const reportBody = buildFeedbackReportHtml(pkg, items);
   const html = `
 <div id="pdf-report-root" style="font-family:Arial,Helvetica,sans-serif;color:#12211F;font-size:10pt;width:100%;max-width:100%;box-sizing:border-box;background:#ffffff;">
@@ -2531,9 +2498,7 @@ ${reportBody}
   (async function run(){
     try {
       await ensureHtml2Pdf();
-      if (typeof html2pdf !== 'function') {
-        throw new Error('html2pdf is not defined after loading');
-      }
+      if (typeof html2pdf !== 'function') throw new Error('html2pdf is not defined after loading');
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       await new Promise(r => setTimeout(r, 150));
 
