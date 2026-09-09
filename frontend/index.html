@@ -2407,16 +2407,20 @@ function downloadFeedbackPackagePdf(pkg, items){
   const html = buildFeedbackReportHtml(pkg, items);
   const CAPTURE_WIDTH = 1100;
 
+  // Fixed, full-viewport, purely visual — masks the brief flash while the real capture
+  // target renders. This element is NOT what gets captured, so its positioning doesn't
+  // matter for the PDF output.
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed; inset:0; background:#fff; z-index:2147483647; display:flex; align-items:center; justify-content:center; font-family:Arial,sans-serif; color:#12211F;';
   overlay.textContent = 'Generating PDF…';
   document.body.appendChild(overlay);
 
-  // Capture a real, in-flow element with an explicit width.  Do not position it off-screen
-  // or calculate a custom PDF page from scrollWidth; both can introduce an x-offset in
-  // html2canvas/html2pdf and clip the first columns of wide tables.
+  // The actual capture target: a plain, normally-flowing element appended to body — no
+  // position:fixed/absolute and no off-screen negative offsets. Both are well-documented
+  // causes of html2canvas silently producing a blank canvas via its clone-into-iframe
+  // rendering process. A static element is the reliable, standard pattern.
   const container = document.createElement('div');
-  container.style.cssText = `width:${CAPTURE_WIDTH}px; max-width:${CAPTURE_WIDTH}px; margin:0; padding:16px; box-sizing:border-box; background:#fff; overflow:visible; position:relative; left:0; top:0;`;
+  container.style.cssText = `width:${CAPTURE_WIDTH}px; background:#fff; padding:16px; box-sizing:border-box;`;
   container.innerHTML = html;
   document.body.appendChild(container);
 
@@ -2424,40 +2428,36 @@ function downloadFeedbackPackagePdf(pkg, items){
   const filenameBase = `${pkg ? pkg.label : 'Performance-Report'} - ${testDef.name}`.replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
 
   const cleanup = () => {
-    if(container.parentNode) container.parentNode.removeChild(container);
-    if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    document.body.removeChild(container);
+    document.body.removeChild(overlay);
   };
 
+  // Wait a couple of frames so layout/fonts/images (the embedded coat-of-arms image) have
+  // settled before html2canvas walks the DOM.
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    // Use A4 landscape instead of a dynamically sized page.  The report is rendered at
-    // 1100 CSS pixels, which is close to the printable width of A4 landscape, so html2pdf
-    // performs a predictable uniform scale rather than clipping the canvas.
-    html2pdf().set({
-      margin: 0,
-      filename: `${filenameBase}.pdf`,
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#fff',
-        width: CAPTURE_WIDTH,
-        windowWidth: CAPTURE_WIDTH,
-        scrollX: 0,
-        scrollY: 0
-      },
-      jsPDF: {
-        unit: 'mm',
-        format: 'a4',
-        orientation: 'landscape',
-        compress: true
-      },
-      pagebreak: { mode: ['css', 'legacy'] }
-    }).from(container).save().then(cleanup).catch((e)=>{
+    html2canvas(container, { scale: 2, useCORS: true, windowWidth: CAPTURE_WIDTH }).then(canvas => {
+      // canvas.width/height are already at the `scale:2` factor (for sharpness) — divide back
+      // down to CSS pixels before converting to mm, since scale should only affect resolution,
+      // not the physical page size.
+      const PX_TO_MM = 25.4 / 96;
+      const pageWidthMM = (canvas.width / 2) * PX_TO_MM;
+      const pageHeightMM = (canvas.height / 2) * PX_TO_MM;
+      const imgData = canvas.toDataURL('image/jpeg', 0.98);
+      const JsPdfCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+      if (!JsPdfCtor) { cleanup(); showToast('PDF generation failed: jsPDF not available.'); return; }
+      const pdf = new JsPdfCtor({ unit: 'mm', format: [pageWidthMM, pageHeightMM] });
+      // Fills the page exactly, corner to corner — no fit/scale/orientation logic involved
+      // at all, so nothing can be cropped or shifted regardless of the report's dimensions.
+      pdf.addImage(imgData, 'JPEG', 0, 0, pageWidthMM, pageHeightMM);
+      pdf.save(`${filenameBase}.pdf`);
+      cleanup();
+    }).catch((e)=>{
       cleanup();
       showToast('PDF generation failed: ' + e.message);
     });
   }));
 }
+
 
 
 

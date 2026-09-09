@@ -1,18 +1,30 @@
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-const FROM = process.env.RESEND_FROM_EMAIL || 'Copperbelt ILC <onboarding@resend.dev>';
+const SMTP_CONFIGURED = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+
+const transporter = SMTP_CONFIGURED
+  ? nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT) || 587,
+      // Port 465 is implicit TLS; anything else (587, 25) starts plaintext and upgrades via
+      // STARTTLS. SMTP_SECURE lets you override this if a provider doesn't follow that norm.
+      secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : Number(process.env.SMTP_PORT) === 465,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    })
+  : null;
+
+const FROM = process.env.SMTP_FROM_EMAIL || 'Copperbelt ILC <no-reply@example.com>';
 const APP_URL = process.env.APP_URL || 'http://localhost:5500';
 
 async function sendMail({ to, subject, html }) {
-  if (!resend) {
-    console.warn('RESEND_API_KEY not set — skipping email send. Would have sent:', { to, subject });
+  if (!transporter) {
+    console.warn('SMTP_HOST/SMTP_USER/SMTP_PASS not set — skipping email send. Would have sent:', { to, subject });
     return;
   }
   try {
-    await resend.emails.send({ from: FROM, to, subject, html });
+    await transporter.sendMail({ from: FROM, to, subject, html });
   } catch (e) {
-    console.error('Failed to send email via Resend:', e.message);
+    console.error('Failed to send email via SMTP:', e.message);
   }
 }
 
