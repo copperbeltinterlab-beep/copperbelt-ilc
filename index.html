@@ -2404,80 +2404,128 @@ function printFeedbackPackage(pkg, items){
 // blank captures in html2canvas — the element must have real, in-viewport coordinates to be
 // painted), covered by an opaque overlay so nothing is visibly disrupted, then removes it.
 function downloadFeedbackPackagePdf(pkg, items){
-  const html = buildFeedbackReportHtml(pkg, items);
-  const CAPTURE_WIDTH = 1100;
+  // Build a fully self-contained report (inline table CSS) so html2canvas does not depend on
+  // main-page stylesheets. Use fixed A4 landscape + page breaks instead of a single custom
+  // page sized to content height — that path swapped dimensions and cropped the left edge.
+  const reportBody = buildFeedbackReportHtml(pkg, items);
+  const html = `
+<div id="pdf-report-root" style="font-family:Arial,Helvetica,sans-serif;color:#12211F;font-size:10pt;width:100%;box-sizing:border-box;background:#fff;">
+<style>
+  #pdf-report-root, #pdf-report-root * { box-sizing: border-box; }
+  #pdf-report-root table { border-collapse: collapse; }
+  #pdf-report-root .pr-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    margin: 0 0 10px 0 !important;
+    font-size: 9pt !important;
+    table-layout: fixed !important;
+  }
+  #pdf-report-root .pr-table th,
+  #pdf-report-root .pr-table td {
+    border: 1px solid #555 !important;
+    padding: 4px 5px !important;
+    text-align: center !important;
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+    vertical-align: middle !important;
+    font-size: 9pt !important;
+  }
+  #pdf-report-root .pr-table thead th {
+    background: #707070 !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+  }
+  #pdf-report-root .fieldset-title {
+    margin: 12px 0 4px 0 !important;
+    font-size: 10pt !important;
+    font-weight: 600 !important;
+  }
+  #pdf-report-root img { max-height: 44px; width: auto; }
+</style>
+${reportBody}
+</div>`;
 
-  // Fixed, full-viewport, purely visual — masks the brief flash while the real capture
-  // target renders. This element is NOT what gets captured, so its positioning doesn't
-  // matter for the PDF output.
+  const testDef = testById(items[0].round.testId);
+  const filenameBase = `${pkg ? pkg.label : 'Performance-Report'} - ${testDef.name}`
+    .replace(/[^\w\- ]+/g, '')
+    .replace(/\s+/g, '_');
+
   const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed; inset:0; background:#fff; z-index:2147483647; display:flex; align-items:center; justify-content:center; font-family:Arial,sans-serif; color:#12211F;';
+  overlay.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;color:#12211F;';
   overlay.textContent = 'Generating PDF…';
   document.body.appendChild(overlay);
 
-  // The actual capture target: a plain, normally-flowing element appended to body — no
-  // position:fixed/absolute and no off-screen negative offsets. Both are well-documented
-  // causes of html2canvas silently producing a blank canvas via its clone-into-iframe
-  // rendering process. A static element is the reliable, standard pattern.
+  // Keep the capture node in normal document flow with real size. Cover it with the overlay
+  // so the user only sees "Generating PDF…". Do not use opacity:0 (blank canvas risk).
   const container = document.createElement('div');
-  container.style.cssText = `width:${CAPTURE_WIDTH}px; background:#fff; padding:16px; box-sizing:border-box;`;
+  container.style.cssText = 'position:absolute;left:0;top:0;width:1100px;background:#fff;padding:10px 14px;box-sizing:border-box;z-index:1;pointer-events:none;';
   container.innerHTML = html;
   document.body.appendChild(container);
 
-  const testDef = testById(items[0].round.testId);
-  const filenameBase = `${pkg ? pkg.label : 'Performance-Report'} - ${testDef.name}`.replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
-
   let done = false;
   const cleanup = () => {
-    if(done) return;
+    if (done) return;
     done = true;
-    if(container.parentNode) document.body.removeChild(container);
-    if(overlay.parentNode) document.body.removeChild(overlay);
+    try { if (container.parentNode) document.body.removeChild(container); } catch (_) {}
+    try { if (overlay.parentNode) document.body.removeChild(overlay); } catch (_) {}
   };
-  // Absolute safety net: whatever else goes wrong internally, this guarantees the
-  // "Generating PDF…" cover can never get stuck on screen forever again.
+
   const safetyTimeout = setTimeout(() => {
-    if(!done){ cleanup(); showToast('PDF generation timed out — please try again.'); }
-  }, 20000);
+    if (!done) {
+      cleanup();
+      showToast('PDF generation timed out — please try again.');
+    }
+  }, 45000);
 
-  // Wait a couple of frames so layout/fonts/images (the embedded coat-of-arms image) have
-  // settled before html2canvas walks the DOM.
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    try{
-      // Size the PDF page to exactly match the rendered content in pixels, converted to mm —
-      // avoids the fit/scale step that was clipping wide tables. No `orientation` option here:
-      // combined with a custom array format it was reinterpreting/swapping the dimensions,
-      // which is what caused the left-edge crop and stray blank page last time.
-      const PX_TO_MM = 25.4 / 96;
-      const contentWidthPx = Math.max(container.scrollWidth, CAPTURE_WIDTH);
-      const contentHeightPx = container.scrollHeight;
-      const pageWidthMM = contentWidthPx * PX_TO_MM;
-      const pageHeightMM = contentHeightPx * PX_TO_MM;
+  const run = async () => {
+    try {
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      // Extra settle time for layout of tables
+      await new Promise(r => setTimeout(r, 150));
 
-      html2pdf().set({
-        margin: 0,
-        filename: `${filenameBase}.pdf`,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, windowWidth: CAPTURE_WIDTH },
-        jsPDF: { unit: 'mm', format: [pageWidthMM, pageHeightMM] },
-      }).from(container).save().then(()=>{
-        clearTimeout(safetyTimeout);
-        cleanup();
-      }).catch((e)=>{
-        clearTimeout(safetyTimeout);
-        cleanup();
-        showToast('PDF generation failed: ' + (e && e.message ? e.message : 'unknown error'));
-      });
-    }catch(e){
+      const source = container.querySelector('#pdf-report-root') || container;
+
+      await html2pdf()
+        .set({
+          margin: [10, 10, 10, 10],
+          filename: `${filenameBase}.pdf`,
+          image: { type: 'jpeg', quality: 0.95 },
+          html2canvas: {
+            scale: 2,
+            useCORS: true,
+            allowTaint: true,
+            logging: false,
+            backgroundColor: '#ffffff',
+            windowWidth: 1100,
+            scrollX: 0,
+            scrollY: -window.scrollY,
+          },
+          jsPDF: {
+            unit: 'mm',
+            format: 'a4',
+            orientation: 'landscape',
+          },
+          pagebreak: {
+            mode: ['avoid-all', 'css', 'legacy'],
+            avoid: ['tr', 'thead', '.fieldset-title'],
+          },
+        })
+        .from(source)
+        .save();
+
       clearTimeout(safetyTimeout);
       cleanup();
-      showToast('PDF generation failed: ' + e.message);
+      showToast('PDF downloaded.');
+    } catch (e) {
+      clearTimeout(safetyTimeout);
+      cleanup();
+      console.error('PDF generation error:', e);
+      showToast('PDF generation failed: ' + (e && e.message ? e.message : 'unknown error'));
     }
-  }));
+  };
+
+  run();
 }
-
-
-
 
 /* ---------------- Forgot / Activate / Reset password ---------------- */
 function showAuthCard(id){
