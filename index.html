@@ -2207,7 +2207,7 @@ function acceptabilityCell(status){
     pending: {label:'Pending release', bg:'#fff3c4', fg:'#7a5b00'},
   };
   const m = map[status] || map.not_evaluated;
-  return `<td style="background:${m.bg}; color:${m.fg}; font-weight:600;">${m.label}</td>`;
+  return `<td style="border:1px solid #555;padding:4px 5px;text-align:center;background:${m.bg};color:${m.fg};font-weight:600;">${m.label}</td>`;
 }
 // One table per analyte field, one row per sample (sorted lowest-to-highest sample ID) —
 // matches the qualitative report template, including the separate ABO / Rhesus / Saline /
@@ -2235,18 +2235,25 @@ function qualitativeFieldTable(field, items){
       }
     }
     return `<tr>
-      <td>${round.sampleId}</td>
-      <td>${resultText}</td>
-      <td>${acceptableResult}</td>
-      <td>${noOfLabs}</td>
-      <td>${consensusText}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${round.sampleId}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${resultText}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${acceptableResult}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${noOfLabs}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${consensusText}</td>
       ${acceptabilityCell(status)}
     </tr>`;
   }).join('');
   return `<div class="fieldset-title" style="margin:14px 0 4px; font-size:10pt;">${field.label}</div>
-    <table class="pr-table">
+    <table class="pr-table" style="width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:10px;font-size:9pt;">
       <colgroup><col style="width:14%;"><col style="width:18%;"><col style="width:18%;"><col style="width:12%;"><col style="width:26%;"><col style="width:12%;"></colgroup>
-      <thead><tr><th>Sample ID</th><th>Your Result</th><th>Acceptable Result</th><th>No of Labs</th><th>Consensus</th><th>Acceptability</th></tr></thead>
+      <thead><tr>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Sample ID</th>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Your Result</th>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Acceptable Result</th>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">No of Labs</th>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Consensus</th>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Acceptability</th>
+      </tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>`;
 }
@@ -2270,11 +2277,31 @@ function quantitativeSampleSection(round, sub, testDef){
       grade = gradeLabel(fEval.status);
       n = (stat && typeof stat.n==='number') ? stat.n : '—';
     }
-    return `<tr><td>${a.label}</td><td>${resultText}</td><td>${grade}</td><td>${n}</td><td>${mean}</td><td>${sd}</td><td>${sdi}</td><td>${range}</td><td>Peer Group Mean ± 2 SD</td></tr>`;
+    return `<tr>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${a.label}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${resultText}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${grade}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${n}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${mean}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${sd}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${sdi}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${range}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">Peer Group Mean ± 2 SD</td>
+    </tr>`;
   }).join('');
   return `<div class="fieldset-title" style="margin:14px 0 4px; font-size:10pt;">Sample ${round.sampleId}</div>
-    <table class="pr-table">
-      <thead><tr><th>Analyte</th><th>Result</th><th>Grade</th><th>Peer Group N</th><th>Mean</th><th>SD</th><th>SDI</th><th>Acceptable Range</th><th>Evaluation Criteria</th></tr></thead>
+    <table class="pr-table" style="width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:10px;font-size:9pt;">
+      <thead><tr>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Analyte</th>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Result</th>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Grade</th>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Peer Group N</th>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Mean</th>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">SD</th>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">SDI</th>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Acceptable Range</th>
+        <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Evaluation Criteria</th>
+      </tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>`;
 }
@@ -2321,9 +2348,9 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
   // Deliberately kept in its own section, separate from "Verified and Authorized" below (the
   // ILC Provider's own Facility Administrator dual sign-off) so the two are never confused.
   const testingPersonnelRows = items.map(({round, sub})=>`<tr>
-      <td>${round.sampleId}</td>
-      <td>${sub.personnelTesting || '—'}</td>
-      <td>${sub.personnelVerifying || '—'}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${round.sampleId}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${sub.personnelTesting || '—'}</td>
+      <td style="border:1px solid #555;padding:4px 5px;text-align:center;">${sub.personnelVerifying || '—'}</td>
     </tr>`).join('');
 
   const signedFeedback = items.map(i=>i.sub.feedback).find(f=>f && f.verifiedBy);
@@ -2371,8 +2398,12 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
       </div>
 
       <div style="margin:14px 0 4px; font-size:10pt;"><strong>Testing Personnel</strong></div>
-      <table class="pr-table">
-        <thead><tr><th>Sample ID</th><th>Tested By</th><th>Results Authorized By</th></tr></thead>
+      <table class="pr-table" style="width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:10px;font-size:9pt;">
+        <thead><tr>
+          <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Sample ID</th>
+          <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Tested By</th>
+          <th style="border:1px solid #555;padding:4px 5px;background:#707070;color:#fff;">Results Authorized By</th>
+        </tr></thead>
         <tbody>${testingPersonnelRows}</tbody>
       </table>
 
@@ -2404,15 +2435,15 @@ function printFeedbackPackage(pkg, items){
 // blank captures in html2canvas — the element must have real, in-viewport coordinates to be
 // painted), covered by an opaque overlay so nothing is visibly disrupted, then removes it.
 function downloadFeedbackPackagePdf(pkg, items){
-  // Build a fully self-contained report (inline table CSS) so html2canvas does not depend on
-  // main-page stylesheets. Use fixed A4 landscape + page breaks instead of a single custom
-  // page sized to content height — that path swapped dimensions and cropped the left edge.
+  // Fully self-contained report HTML with table CSS inlined. Fixed A4 landscape + page
+  // breaks — avoids the custom [width,height] mm format that swapped axes and cropped
+  // the left edge of every column in the previous generator.
   const reportBody = buildFeedbackReportHtml(pkg, items);
   const html = `
-<div id="pdf-report-root" style="font-family:Arial,Helvetica,sans-serif;color:#12211F;font-size:10pt;width:100%;box-sizing:border-box;background:#fff;">
-<style>
-  #pdf-report-root, #pdf-report-root * { box-sizing: border-box; }
-  #pdf-report-root table { border-collapse: collapse; }
+<div id="pdf-report-root" style="font-family:Arial,Helvetica,sans-serif;color:#12211F;font-size:10pt;width:100%;max-width:100%;box-sizing:border-box;background:#ffffff;overflow:visible;">
+<style type="text/css">
+  #pdf-report-root, #pdf-report-root * { box-sizing: border-box !important; }
+  #pdf-report-root table { border-collapse: collapse !important; width: 100% !important; }
   #pdf-report-root .pr-table {
     width: 100% !important;
     border-collapse: collapse !important;
@@ -2431,8 +2462,8 @@ function downloadFeedbackPackagePdf(pkg, items){
     font-size: 9pt !important;
   }
   #pdf-report-root .pr-table thead th {
-    background: #707070 !important;
-    color: #fff !important;
+    background-color: #707070 !important;
+    color: #ffffff !important;
     font-weight: 600 !important;
   }
   #pdf-report-root .fieldset-title {
@@ -2440,7 +2471,7 @@ function downloadFeedbackPackagePdf(pkg, items){
     font-size: 10pt !important;
     font-weight: 600 !important;
   }
-  #pdf-report-root img { max-height: 44px; width: auto; }
+  #pdf-report-root img { max-height: 44px !important; width: auto !important; }
 </style>
 ${reportBody}
 </div>`;
@@ -2451,14 +2482,16 @@ ${reportBody}
     .replace(/\s+/g, '_');
 
   const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;color:#12211F;';
+  overlay.setAttribute('id', 'pdf-gen-overlay');
+  overlay.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;color:#12211F;font-size:14px;';
   overlay.textContent = 'Generating PDF…';
   document.body.appendChild(overlay);
 
-  // Keep the capture node in normal document flow with real size. Cover it with the overlay
-  // so the user only sees "Generating PDF…". Do not use opacity:0 (blank canvas risk).
+  // Capture node: real size in the document. Overlay covers it visually.
+  // Never use opacity:0 or off-screen negative coordinates (blank/cropped canvas).
   const container = document.createElement('div');
-  container.style.cssText = 'position:absolute;left:0;top:0;width:1100px;background:#fff;padding:10px 14px;box-sizing:border-box;z-index:1;pointer-events:none;';
+  container.setAttribute('id', 'pdf-gen-container');
+  container.style.cssText = 'position:absolute;left:0;top:0;width:1050px;background:#ffffff;padding:8px 12px;box-sizing:border-box;z-index:1;pointer-events:none;';
   container.innerHTML = html;
   document.body.appendChild(container);
 
@@ -2466,8 +2499,8 @@ ${reportBody}
   const cleanup = () => {
     if (done) return;
     done = true;
-    try { if (container.parentNode) document.body.removeChild(container); } catch (_) {}
-    try { if (overlay.parentNode) document.body.removeChild(overlay); } catch (_) {}
+    try { const c = document.getElementById('pdf-gen-container'); if (c && c.parentNode) c.parentNode.removeChild(c); } catch (_) {}
+    try { const o = document.getElementById('pdf-gen-overlay'); if (o && o.parentNode) o.parentNode.removeChild(o); } catch (_) {}
   };
 
   const safetyTimeout = setTimeout(() => {
@@ -2475,43 +2508,46 @@ ${reportBody}
       cleanup();
       showToast('PDF generation timed out — please try again.');
     }
-  }, 45000);
+  }, 60000);
 
-  const run = async () => {
+  (async function run(){
     try {
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-      // Extra settle time for layout of tables
-      await new Promise(r => setTimeout(r, 150));
+      await new Promise(r => setTimeout(r, 200));
 
-      const source = container.querySelector('#pdf-report-root') || container;
+      const source = document.getElementById('pdf-report-root') || container;
 
-      await html2pdf()
+      const worker = html2pdf()
         .set({
-          margin: [10, 10, 10, 10],
-          filename: `${filenameBase}.pdf`,
-          image: { type: 'jpeg', quality: 0.95 },
+          margin: [8, 8, 8, 8],
+          filename: filenameBase + '.pdf',
+          image: { type: 'jpeg', quality: 0.96 },
           html2canvas: {
             scale: 2,
             useCORS: true,
             allowTaint: true,
             logging: false,
             backgroundColor: '#ffffff',
-            windowWidth: 1100,
+            windowWidth: 1050,
             scrollX: 0,
-            scrollY: -window.scrollY,
+            scrollY: 0,
+            x: 0,
+            y: 0,
           },
           jsPDF: {
             unit: 'mm',
             format: 'a4',
             orientation: 'landscape',
+            compress: true,
           },
           pagebreak: {
-            mode: ['avoid-all', 'css', 'legacy'],
-            avoid: ['tr', 'thead', '.fieldset-title'],
+            mode: ['css', 'legacy'],
+            avoid: ['.pr-table tr', 'thead', '.fieldset-title'],
           },
         })
-        .from(source)
-        .save();
+        .from(source);
+
+      await worker.save();
 
       clearTimeout(safetyTimeout);
       cleanup();
@@ -2522,9 +2558,7 @@ ${reportBody}
       console.error('PDF generation error:', e);
       showToast('PDF generation failed: ' + (e && e.message ? e.message : 'unknown error'));
     }
-  };
-
-  run();
+  })();
 }
 
 /* ---------------- Forgot / Activate / Reset password ---------------- */
