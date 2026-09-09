@@ -2427,34 +2427,52 @@ function downloadFeedbackPackagePdf(pkg, items){
   const testDef = testById(items[0].round.testId);
   const filenameBase = `${pkg ? pkg.label : 'Performance-Report'} - ${testDef.name}`.replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
 
+  let done = false;
   const cleanup = () => {
-    document.body.removeChild(container);
-    document.body.removeChild(overlay);
+    if(done) return;
+    done = true;
+    if(container.parentNode) document.body.removeChild(container);
+    if(overlay.parentNode) document.body.removeChild(overlay);
   };
+  // Absolute safety net: whatever else goes wrong internally, this guarantees the
+  // "Generating PDF…" cover can never get stuck on screen forever again.
+  const safetyTimeout = setTimeout(() => {
+    if(!done){ cleanup(); showToast('PDF generation timed out — please try again.'); }
+  }, 20000);
 
   // Wait a couple of frames so layout/fonts/images (the embedded coat-of-arms image) have
   // settled before html2canvas walks the DOM.
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    html2canvas(container, { scale: 2, useCORS: true, windowWidth: CAPTURE_WIDTH }).then(canvas => {
-      // canvas.width/height are already at the `scale:2` factor (for sharpness) — divide back
-      // down to CSS pixels before converting to mm, since scale should only affect resolution,
-      // not the physical page size.
+    try{
+      // Size the PDF page to exactly match the rendered content in pixels, converted to mm —
+      // avoids the fit/scale step that was clipping wide tables. No `orientation` option here:
+      // combined with a custom array format it was reinterpreting/swapping the dimensions,
+      // which is what caused the left-edge crop and stray blank page last time.
       const PX_TO_MM = 25.4 / 96;
-      const pageWidthMM = (canvas.width / 2) * PX_TO_MM;
-      const pageHeightMM = (canvas.height / 2) * PX_TO_MM;
-      const imgData = canvas.toDataURL('image/jpeg', 0.98);
-      const JsPdfCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
-      if (!JsPdfCtor) { cleanup(); showToast('PDF generation failed: jsPDF not available.'); return; }
-      const pdf = new JsPdfCtor({ unit: 'mm', format: [pageWidthMM, pageHeightMM] });
-      // Fills the page exactly, corner to corner — no fit/scale/orientation logic involved
-      // at all, so nothing can be cropped or shifted regardless of the report's dimensions.
-      pdf.addImage(imgData, 'JPEG', 0, 0, pageWidthMM, pageHeightMM);
-      pdf.save(`${filenameBase}.pdf`);
-      cleanup();
-    }).catch((e)=>{
+      const contentWidthPx = Math.max(container.scrollWidth, CAPTURE_WIDTH);
+      const contentHeightPx = container.scrollHeight;
+      const pageWidthMM = contentWidthPx * PX_TO_MM;
+      const pageHeightMM = contentHeightPx * PX_TO_MM;
+
+      html2pdf().set({
+        margin: 0,
+        filename: `${filenameBase}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, windowWidth: CAPTURE_WIDTH },
+        jsPDF: { unit: 'mm', format: [pageWidthMM, pageHeightMM] },
+      }).from(container).save().then(()=>{
+        clearTimeout(safetyTimeout);
+        cleanup();
+      }).catch((e)=>{
+        clearTimeout(safetyTimeout);
+        cleanup();
+        showToast('PDF generation failed: ' + (e && e.message ? e.message : 'unknown error'));
+      });
+    }catch(e){
+      clearTimeout(safetyTimeout);
       cleanup();
       showToast('PDF generation failed: ' + e.message);
-    });
+    }
   }));
 }
 
