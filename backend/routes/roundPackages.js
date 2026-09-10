@@ -9,7 +9,23 @@ const { getTestName } = require('../testDefinitions');
 const { sendDeletionRequestEmail, sendFeedbackReleasedEmail } = require('../email');
 
 const router = express.Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB cap
+// Only accept file types a round's instructions doc would realistically be.
+// Blocks executables, scripts, and other unexpected uploads.
+const ALLOWED_UPLOAD_TYPES = [
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+];
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB cap
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_UPLOAD_TYPES.includes(file.mimetype)) return cb(null, true);
+    cb(new Error('Unsupported file type. Please upload a PDF, Word document, or image.'));
+  },
+});
 
 const MIN_YEAR = 2026;
 const MAX_YEAR = 2035; // generous forward window; extend later if ever needed

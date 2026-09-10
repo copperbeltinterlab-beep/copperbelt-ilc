@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { sendPasswordResetEmail } = require('../email');
@@ -9,6 +10,16 @@ const { sendPasswordResetEmail } = require('../email');
 const router = express.Router();
 
 const RESET_WINDOW_MS = 20 * 60 * 1000; // 20 minutes
+
+// Throttle brute-force login attempts and reset/bootstrap spam.
+// 10 attempts per 15 minutes per IP.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Please try again later.' },
+});
 
 function signToken(user) {
   return jwt.sign(
@@ -47,7 +58,7 @@ router.get('/bootstrap-status', async (req, res) => {
 });
 
 // POST /api/auth/bootstrap — create the very first Super Admin. Only works once.
-router.post('/bootstrap', async (req, res) => {
+router.post('/bootstrap', authLimiter, async (req, res) => {
   const { name, username, email, password } = req.body;
   if (!name || !username || !password) {
     return res.status(400).json({ error: 'Name, username and password are required.' });
@@ -67,7 +78,7 @@ router.post('/bootstrap', async (req, res) => {
 });
 
 // POST /api/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, async (req, res) => {
   const { username, password } = req.body;
   if (!username) {
     return res.status(400).json({ error: 'Username is required.' });
@@ -174,7 +185,7 @@ router.post('/activate', async (req, res) => {
 
 // POST /api/auth/forgot-password — { email }
 // Always responds the same way whether or not the email exists, so we don't leak account info.
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', authLimiter, async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email is required.' });
 
@@ -193,7 +204,7 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 // POST /api/auth/reset-password — { token, password }
-router.post('/reset-password', async (req, res) => {
+router.post('/reset-password', authLimiter, async (req, res) => {
   const { token, password } = req.body;
   if (!token || !password) return res.status(400).json({ error: 'Missing token or password.' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
