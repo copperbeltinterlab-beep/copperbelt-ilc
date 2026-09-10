@@ -49,3 +49,21 @@ create table if not exists submissions (
 create index if not exists idx_users_facility on users(facility_id);
 create index if not exists idx_rounds_facility on rounds(providing_facility_id);
 create index if not exists idx_submissions_round on submissions(round_id);
+
+-- Follow-up queries from participating facilities about their results / feedback.
+-- Read by Facility Admins at the providing facility (in-app notifications).
+create table if not exists submission_queries (
+  id serial primary key,
+  round_id integer not null references rounds(id) on delete cascade,
+  submission_id integer not null references submissions(id) on delete cascade,
+  from_facility_id integer not null references facilities(id) on delete cascade,
+  from_user_id integer references users(id) on delete set null,
+  sample_id text,
+  message text not null,
+  created_at timestamptz not null default now(),
+  read_at timestamptz,
+  read_by integer references users(id) on delete set null
+);
+
+create index if not exists idx_submission_queries_round on submission_queries(round_id);
+create index if not exists idx_submission_queries_unread on submission_queries(read_at) where read_at is null;

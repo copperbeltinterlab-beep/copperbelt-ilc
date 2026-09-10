@@ -12,7 +12,12 @@ const TESTS = {
   hbsag: { name: 'HBsAg Serology', kind: 'qualitative', fields: ['value'] },
   rpr: { name: 'RPR Serology', kind: 'qualitative', fields: ['value'] },
   pregnancy: { name: 'Pregnancy Test', kind: 'qualitative', fields: ['value'] },
-  mtbrif: { name: 'MTB Rif (GeneXpert)', kind: 'qualitative', fields: ['mtb', 'rif', 'riflevel'] },
+  mtbrif: { name: 'MTB Rif (GeneXpert)', kind: 'qualitative', fields: ['mtb'] },
+  bacterialgrowth: {
+    name: 'Bacterial Growth',
+    kind: 'qualitative',
+    fields: ['growth', 'gram', 'arrangement', 'bacterialId'],
+  },
 
   fbc: {
     name: 'Full Blood Count',

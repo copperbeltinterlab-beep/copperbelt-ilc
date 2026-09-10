@@ -560,6 +560,17 @@
     </section>
 
     <!-- FACILITY USER -->
+    <section class="tab-panel" id="tab-queries">
+      <h2 class="section">Queries from participating facilities</h2>
+      <p class="note">Follow-up questions about samples and feedback for rounds your facility provides. Unread items are highlighted.</p>
+      <div id="queriesInboxList"></div>
+    </section>
+
+    <section class="tab-panel" id="tab-oversight">
+      <h2 class="section">Round oversight</h2>
+      <div id="oversightContent"></div>
+    </section>
+
     <section class="tab-panel" id="tab-rounds">
       <h2 class="section">Active rounds</h2>
       <div id="roundsList"></div>
@@ -608,12 +619,21 @@
 
 <script>
 /* ---------------- Test catalog ---------------- */
-const SEROLOGY_OPTIONS = ['Indeterminate','Reactive','Non-Reactive'];
+const SEROLOGY_OPTIONS_HIV = ['Indeterminate','Reactive','Non-Reactive'];
+const SEROLOGY_OPTIONS = ['Reactive','Non-Reactive']; // Pregnancy, RPR, HBsAg
 const NOT_PERFORMED_REASONS = [
   'Reagent Out Stock',
   'Analyser Out of Service (Maintenance and Calibration)',
   'Analyser Breakdown',
   'Test not Available',
+];
+const GRAM_OPTIONS = [
+  'Gram positive cocci','Gram positive coccobacilli','Gram positive bacilli',
+  'Gram negative cocci','Gram negative coccobacilli','Gram negative bacilli',
+  'Yeast','Others',
+];
+const ARRANGEMENT_OPTIONS = [
+  'Single','Pairs','Chains','Tetrads','Clusters','Budding','Non-budding','Others',
 ];
 const TESTS = [
   { id:'bloodgroup', name:'Blood Grouping and Cross Match', kind:'categorical', fields:[
@@ -622,14 +642,18 @@ const TESTS = [
     {key:'saline', label:'Cross match — Saline', options:['Compatible','Incompatible']},
     {key:'ahg', label:'Cross match — AHG', options:['Compatible','Incompatible']},
   ]},
-  { id:'hiv', name:'HIV Serology', kind:'categorical', fields:[{key:'value', label:'Result', options:SEROLOGY_OPTIONS}] },
+  { id:'hiv', name:'HIV Serology', kind:'categorical', fields:[{key:'value', label:'Result', options:SEROLOGY_OPTIONS_HIV}] },
   { id:'hbsag', name:'HBsAg Serology', kind:'categorical', fields:[{key:'value', label:'Result', options:SEROLOGY_OPTIONS}] },
   { id:'rpr', name:'RPR Serology', kind:'categorical', fields:[{key:'value', label:'Result', options:SEROLOGY_OPTIONS}] },
   { id:'pregnancy', name:'Pregnancy Test', kind:'categorical', fields:[{key:'value', label:'Result', options:SEROLOGY_OPTIONS}] },
   { id:'mtbrif', name:'MTB Rif (GeneXpert)', kind:'categorical', fields:[
     {key:'mtb', label:'Mycobacterium Tuberculosis', options:['MTB Not Detected','MTB Detected']},
-    {key:'rif', label:'Rifampicin Detection', options:['RIF Not Detected','RIF Detected']},
-    {key:'riflevel', label:'Rif Level', options:['N/A','Low','Medium','High']},
+  ]},
+  { id:'bacterialgrowth', name:'Bacterial Growth', kind:'categorical', fields:[
+    {key:'growth', label:'Growth', options:['Growth obtained','No growth obtained']},
+    {key:'gram', label:'Gram Reaction', options:GRAM_OPTIONS, allowOther:true},
+    {key:'arrangement', label:'Cell Arrangement', options:ARRANGEMENT_OPTIONS, allowOther:true},
+    {key:'bacterialId', label:'Bacterial Identification', freeText:true},
   ]},
   { id:'fbc', name:'Full Blood Count', kind:'quantitative', fields:[
     {key:'wbc', label:'White Cell Count (WBC)', unit:'×10³/µL'},
@@ -831,7 +855,7 @@ async function tryRestoreSession(){
 /* ---------------- Nav / role-based tabs ---------------- */
 const NAV_BY_ROLE = {
   superadmin: [ ['facilities','Facilities'], ['access','Users & Access'], ['allrounds','All ILC Rounds'] ],
-  facilityadmin: [ ['facusers','My Facility Users'], ['provide','Tests We Provide'], ['feedback-admin','Give Feedback'] ],
+  facilityadmin: [ ['facusers','My Facility Users'], ['provide','Tests We Provide'], ['feedback-admin','Give Feedback'], ['queries','Queries'] ],
   user: [ ['rounds','Active Rounds'], ['submit','Submit Result'], ['myfeedback','My Feedback'] ],
 };
 
@@ -870,6 +894,7 @@ async function loadAllData(){
     MY_SUBMISSION_STATUS = await api('/rounds/mine/status');
   }
   renderCurrentTab();
+  if(session.role === 'facilityadmin') updateQueriesBadge();
 }
 
 function setActiveTab(tab){
@@ -889,6 +914,8 @@ function renderCurrentTab(){
   if(tab==='facusers') renderFacUsers();
   if(tab==='provide') renderProvide();
   if(tab==='feedback-admin') renderFeedbackAdmin();
+  if(tab==='queries') renderQueriesInbox();
+  if(tab==='oversight') renderOversight();
   if(tab==='rounds') renderRounds();
   if(tab==='submit') renderSubmit();
   if(tab==='myfeedback') renderMyFeedback();
@@ -1327,6 +1354,7 @@ function renderProvide(){
         ${p.status==='active' ? `
           <button class="secondary small pkg-edit-deadline" data-id="${p.id}">Change deadline</button>
           <button class="secondary small pkg-add-sample" data-id="${p.id}">Add sample</button>
+          <button class="secondary small pkg-oversight-provide" data-id="${p.id}">View participation & results</button>
           <button class="secondary small pkg-close" data-id="${p.id}">Close round</button>
         ` : `
           <button class="secondary small pkg-reopen" data-id="${p.id}">Reopen</button>
@@ -1371,6 +1399,9 @@ function renderProvide(){
         renderProvide();
       }catch(e){ showToast(e.message); }
     });
+  });
+  el.querySelectorAll('.pkg-oversight-provide').forEach(btn=>{
+    btn.addEventListener('click', ()=>openOversight(btn.dataset.id));
   });
   el.querySelectorAll('.pkg-close').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
@@ -1526,6 +1557,7 @@ function renderAllRounds(){
         ` : `
           <button class="secondary small pkg-reopen-admin" data-id="${p.id}">Reopen</button>
         `}
+        <button class="secondary small pkg-oversight" data-id="${p.id}">View participation & results</button>
         ${p.deletionRequestedAt ? `<button class="secondary small pkg-dismiss-delete-admin" data-id="${p.id}">Dismiss request</button>` : ''}
         <button class="secondary small pkg-delete-admin" data-id="${p.id}">Delete</button>
       </div>
@@ -1596,6 +1628,9 @@ function renderAllRounds(){
         renderAllRounds();
       }catch(e){ showToast(e.message); }
     });
+  });
+  el.querySelectorAll('.pkg-oversight').forEach(btn=>{
+    btn.addEventListener('click', ()=>openOversight(btn.dataset.id));
   });
 }
 document.querySelectorAll('.allrounds-subtab').forEach(btn=>{
@@ -1743,6 +1778,126 @@ async function renderFeedbackSubmissions(roundId){
     });
   });
 }
+
+/* ---------------- Oversight (Super Admin + providing Facility Admin, view-only) ---------------- */
+let OVERSIGHT_DATA = null;
+async function openOversight(packageId){
+  try{
+    OVERSIGHT_DATA = await api(`/round-packages/${packageId}/oversight`);
+    setActiveTab('oversight');
+    renderOversight();
+  }catch(e){ showToast(e.message); }
+}
+function renderOversight(){
+  const el = document.getElementById('oversightContent');
+  if(!el) return;
+  const d = OVERSIGHT_DATA;
+  if(!d){ el.innerHTML = '<div class="empty">Select a round and click “View participation & results”.</div>'; return; }
+  const test = testById(d.testId);
+  const subTab = el.dataset.subTab || 'submitted';
+  const list = subTab === 'submitted' ? d.submitted : d.notSubmitted;
+  const facOptions = d.submitted.map(f=>`<option value="${f.facilityId}">${f.facilityName}</option>`).join('');
+  el.innerHTML = `
+    <div class="card">
+      <strong>${d.label} — ${test ? test.name : d.testId}</strong>
+      <div class="meta">Participation: ${d.participationMode === 'selected' ? 'Selected laboratories' : 'All facilities'} · ${d.participants.length} participant(s)</div>
+      <div class="meta" style="margin-top:6px;">Participants: ${d.participants.length ? d.participants.map(p=>p.facilityName).join(', ') : '—'}</div>
+    </div>
+    <div class="btn-row" style="margin-bottom:10px;">
+      <button class="secondary small oversight-subtab ${subTab==='submitted'?'active':''}" data-tab="submitted">Submitted (${d.submitted.length})</button>
+      <button class="secondary small oversight-subtab ${subTab==='notSubmitted'?'active':''}" data-tab="notSubmitted">Not submitted (${d.notSubmitted.length})</button>
+    </div>
+    <div class="card" id="oversightFacList">
+      ${list.length ? list.map(f=>`<div class="row-item"><div>${f.facilityName}</div></div>`).join('') : '<div class="empty">None</div>'}
+    </div>
+    <h3 class="subsection">View submitted results by facility</h3>
+    <div class="card">
+      <label>Facility</label>
+      <select id="oversightFacilitySelect">
+        <option value="">Select a facility…</option>
+        ${facOptions}
+      </select>
+      <div id="oversightFacilityResults" style="margin-top:12px;"></div>
+    </div>`;
+  el.dataset.subTab = subTab;
+  el.querySelectorAll('.oversight-subtab').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      el.dataset.subTab = btn.dataset.tab;
+      renderOversight();
+    });
+  });
+  const sel = document.getElementById('oversightFacilitySelect');
+  const resultsEl = document.getElementById('oversightFacilityResults');
+  sel.addEventListener('change', ()=>{
+    const fid = Number(sel.value);
+    if(!fid){ resultsEl.innerHTML = ''; return; }
+    const rows = d.submissions.filter(s=>s.facilityId===fid);
+    if(!rows.length){ resultsEl.innerHTML = '<div class="empty">No submitted results for this facility.</div>'; return; }
+    resultsEl.innerHTML = rows.map(s=>{
+      const rejected = s.sampleAcceptability === 'rejected';
+      return `<div style="border-top:1px solid var(--line); padding:10px 0;">
+        <strong>Sample ${s.sampleId || '—'}</strong>
+        <div class="meta">Submitted ${s.submittedAt ? new Date(s.submittedAt).toLocaleString() : '—'}
+          · Method: ${s.methodUsed || '—'} · Condition: ${s.sampleCondition || '—'}
+          · Received: ${s.dateReceived || '—'} by ${s.receivedBy || '—'}</div>
+        ${rejected
+          ? `<div class="meta" style="color:#8a1f1f;">Sample rejected: ${s.sampleRejectionReason || '—'}</div>`
+          : `<div class="meta" style="margin-top:4px;">${formatResultSummary(d.testId, s.result)}</div>
+             <div class="meta">Tested by: ${s.personnelTesting || '—'} · Authorized by: ${s.personnelVerifying || '—'}</div>`}
+      </div>`;
+    }).join('');
+  });
+}
+
+/* ---------------- Facility Admin: Queries inbox ---------------- */
+async function renderQueriesInbox(){
+  const el = document.getElementById('queriesInboxList');
+  if(!el) return;
+  try{
+    const items = await api('/rounds/queries/inbox');
+    if(!items.length){ el.innerHTML = '<div class="empty">No queries yet.</div>'; return; }
+    el.innerHTML = items.map(q=>{
+      const safeMsg = String(q.message||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+      return `
+      <div class="card" style="${q.unread ? 'border-color:var(--gold); box-shadow:0 0 0 1px var(--gold);' : ''}">
+        <div class="row-item" style="border:none; padding-top:0; flex-wrap:wrap;">
+          <div>
+            <strong>Sample ${q.sampleId || '—'}</strong>
+            ${q.unread ? ' <span class="badge" style="background:#fff3c4;color:#7a5b00;">Unread</span>' : ''}
+            <div class="meta">From ${q.fromFacilityName || '—'} (${q.fromUserName || 'user'}) · ${q.createdAt ? new Date(q.createdAt).toLocaleString() : ''}</div>
+            <div class="meta">${testById(q.testId) ? testById(q.testId).name : (q.testId || '')}</div>
+          </div>
+        </div>
+        <p style="margin:8px 0; white-space:pre-wrap;">${safeMsg}</p>
+        <div class="btn-row">
+          ${q.unread ? `<button class="secondary small mark-query-read" data-id="${q.id}">Mark as read</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+    el.querySelectorAll('.mark-query-read').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        try{
+          await api(`/rounds/queries/${btn.dataset.id}/read`, { method:'POST', body:{} });
+          renderQueriesInbox();
+          updateQueriesBadge();
+        }catch(e){ showToast(e.message); }
+      });
+    });
+  }catch(e){
+    el.innerHTML = `<div class="empty">${e.message}</div>`;
+  }
+}
+async function updateQueriesBadge(){
+  if(!session || session.role !== 'facilityadmin') return;
+  try{
+    const items = await api('/rounds/queries/inbox');
+    const n = items.filter(q=>q.unread).length;
+    const btn = document.querySelector('.nav-btn[data-tab="queries"]');
+    if(!btn) return;
+    btn.textContent = n > 0 ? `Queries (${n})` : 'Queries';
+  }catch(e){ /* ignore */ }
+}
+
 /* ---------------- USER: Active Rounds ---------------- */
 let MY_SUBMISSION_STATUS = {}; // roundId -> 'submitted' | 'draft'
 let selectedPackageId = null;
@@ -1817,10 +1972,24 @@ function dynamicFieldsHtml(testId, existing){
   return t.fields.map(f=>{
     const fs = fieldState(existing, f.key);
     let control;
-    if(f.options){
-      control = `<label>${f.label}</label><select id="rf_${f.key}" ${fs.notPerformed?'disabled':''}><option value="">Select</option>${f.options.map(v=>`<option ${fs.value===v?'selected':''}>${v}</option>`).join('')}</select>`;
+    if(f.freeText){
+      const esc = String(fs.value||'').replace(/"/g,'&quot;');
+      control = `<label>${f.label}</label><input type="text" id="rf_${f.key}" value="${esc}" ${fs.notPerformed?'disabled':''} placeholder="Type identification">`;
+    } else if(f.options){
+      const known = f.options.includes(fs.value);
+      const isOther = f.allowOther && fs.value && !known;
+      const selVal = isOther ? 'Others' : (fs.value || '');
+      const otherVal = isOther ? String(fs.value).replace(/"/g,'&quot;') : '';
+      control = `<label>${f.label}</label>
+        <select id="rf_${f.key}" class="${f.allowOther?'has-other-option':''}" data-field="${f.key}" ${fs.notPerformed?'disabled':''}>
+          <option value="">Select</option>
+          ${f.options.map(v=>`<option ${selVal===v?'selected':''}>${v}</option>`).join('')}
+        </select>
+        ${f.allowOther ? `<input type="text" id="rf_${f.key}_other" class="other-text-input" data-field="${f.key}"
+          placeholder="Specify other…" value="${otherVal}"
+          style="margin-top:6px; ${isOther && !fs.notPerformed?'':'display:none;'}" ${fs.notPerformed?'disabled':''}>` : ''}`;
     } else {
-      control = `<label>${f.label} (${f.unit})</label><input type="number" step="any" class="mono" id="rf_${f.key}" value="${fs.value}" ${fs.notPerformed?'disabled':''}>`;
+      control = `<label>${f.label}${f.unit?` (${f.unit})`:''}</label><input type="number" step="any" class="mono" id="rf_${f.key}" value="${fs.value}" ${fs.notPerformed?'disabled':''}>`;
     }
     return notPerformedRow(f.key, control, fs.notPerformed, fs.reason);
   }).join('');
@@ -1830,16 +1999,22 @@ function dynamicFieldsHtml(testId, existing){
 function val(container, id){ const el = container.querySelector('#'+id); return el ? el.value : ''; }
 function collectResult(testId, container){
   const t = testById(testId);
-  const fieldObj = (key) => {
+  const fieldObj = (f) => {
+    const key = f.key;
     const cb = container.querySelector(`.not-performed-cb[data-field="${key}"]`);
     const notPerformed = cb ? cb.checked : false;
     const reasonSel = container.querySelector(`.np-reason-select[data-field="${key}"]`);
     const reason = notPerformed ? (reasonSel ? reasonSel.value : '') : null;
-    const raw = val(container, 'rf_'+key);
+    let raw = val(container, 'rf_'+key);
+    if(!notPerformed && f.allowOther && raw === 'Others'){
+      const otherEl = container.querySelector(`#rf_${key}_other`);
+      const otherText = otherEl ? otherEl.value.trim() : '';
+      raw = otherText || null;
+    }
     return { value: notPerformed ? null : (raw===''?null:raw), notPerformed, reason };
   };
   const o = {};
-  t.fields.forEach(f=>o[f.key]=fieldObj(f.key));
+  t.fields.forEach(f=>o[f.key]=fieldObj(f));
   return o;
 }
 // Returns a list of field labels currently marked Test Not Performed without a reason selected.
@@ -1858,16 +2033,31 @@ function missingNotPerformedReasons(testId, container){
 function wireNotPerformedCheckboxes(container){
   container.querySelectorAll('.not-performed-cb').forEach(cb=>{
     const control = container.querySelector('#rf_'+cb.dataset.field);
+    const otherInput = container.querySelector(`#rf_${cb.dataset.field}_other`);
     const reasonSel = container.querySelector(`.np-reason-select[data-field="${cb.dataset.field}"]`);
     if(control) control.disabled = cb.checked;
+    if(otherInput) otherInput.disabled = cb.checked;
     if(reasonSel) reasonSel.style.display = cb.checked ? '' : 'none';
     cb.addEventListener('change', ()=>{
       if(control){ control.disabled = cb.checked; if(cb.checked) control.value=''; }
+      if(otherInput){ otherInput.disabled = cb.checked; if(cb.checked){ otherInput.value=''; otherInput.style.display='none'; } }
       if(reasonSel){
         reasonSel.style.display = cb.checked ? '' : 'none';
         if(!cb.checked) reasonSel.value = '';
       }
     });
+  });
+  // Show/hide "Others" free-text when that option is chosen
+  container.querySelectorAll('select.has-other-option').forEach(sel=>{
+    const otherInput = container.querySelector(`#rf_${sel.dataset.field}_other`);
+    if(!otherInput) return;
+    const sync = ()=>{
+      const show = sel.value === 'Others' && !sel.disabled;
+      otherInput.style.display = show ? '' : 'none';
+      if(!show) otherInput.value = '';
+    };
+    sel.addEventListener('change', sync);
+    sync();
   });
 }
 

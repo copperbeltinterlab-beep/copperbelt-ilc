@@ -502,4 +502,107 @@ router.delete('/:id', requireAuth, requireRole('superadmin'), async (req, res) =
   res.json({ message: 'Round deleted.' });
 });
 
+
+// GET /api/round-packages/:id/oversight — view-only participation & submission status.
+// Super Admin: any package. Facility Admin: only packages their facility provides.
+// Returns participants, submitted / not-submitted lists, and full submitted result rows
+// (read-only — this endpoint never mutates data).
+router.get('/:id/oversight', requireAuth, requireRole('superadmin', 'facilityadmin'), async (req, res) => {
+  const pkg = await getPackage(req.params.id);
+  if (!pkg) return res.status(404).json({ error: 'Round not found.' });
+  if (req.user.role === 'facilityadmin' && pkg.providing_facility_id !== req.user.facilityId) {
+    return res.status(403).json({ error: 'You can only oversee rounds provided by your facility.' });
+  }
+
+  const samples = await getSamples(pkg.id);
+  const sampleIds = samples.map(s => s.id);
+  if (!sampleIds.length) {
+    return res.json({
+      packageId: pkg.id,
+      label: packageLabel(pkg),
+      testId: pkg.test_id,
+      participationMode: pkg.participation_mode || 'all',
+      participants: [],
+      submitted: [],
+      notSubmitted: [],
+      submissions: [],
+    });
+  }
+
+  // Eligible participant facilities
+  let facilities;
+  if (pkg.participation_mode === 'selected') {
+    const ids = pkg.participant_facility_ids || [];
+    if (!ids.length) {
+      facilities = [];
+    } else {
+      const { rows } = await pool.query(
+        'select id, name from facilities where id = any($1::int[]) and active = true order by name',
+        [ids]
+      );
+      facilities = rows;
+    }
+  } else {
+    const { rows } = await pool.query(
+      'select id, name from facilities where active = true and id != $1 order by name',
+      [pkg.providing_facility_id]
+    );
+    facilities = rows;
+  }
+
+  const { rows: subRows } = await pool.query(
+    `select * from submissions
+      where round_id = any($1::int[]) and status = 'submitted'
+      order by submitted_at`,
+    [sampleIds]
+  );
+
+  // Map sample id -> sample_id label
+  const sampleLabel = {};
+  samples.forEach(s => { sampleLabel[s.id] = s.sample_id; });
+
+  const submittedByFacility = new Set();
+  const submissions = subRows.map(s => {
+    submittedByFacility.add(s.facility_id);
+    return {
+      id: s.id,
+      roundId: s.round_id,
+      sampleId: sampleLabel[s.round_id] || null,
+      facilityId: s.facility_id,
+      dateReceived: toDateOnly(s.date_received),
+      methodUsed: s.method_used,
+      sampleCondition: s.sample_condition,
+      receivedBy: s.received_by,
+      sampleAcceptability: s.sample_acceptability,
+      sampleRejectionReason: s.sample_rejection_reason,
+      result: s.result,
+      personnelTesting: s.personnel_testing,
+      personnelVerifying: s.personnel_verifying,
+      status: s.status,
+      submittedAt: s.submitted_at,
+      feedback: s.feedback,
+    };
+  });
+
+  const submitted = facilities
+    .filter(f => submittedByFacility.has(f.id))
+    .map(f => ({ facilityId: f.id, facilityName: f.name }));
+  const notSubmitted = facilities
+    .filter(f => !submittedByFacility.has(f.id))
+    .map(f => ({ facilityId: f.id, facilityName: f.name }));
+
+  res.json({
+    packageId: pkg.id,
+    label: packageLabel(pkg),
+    testId: pkg.test_id,
+    providingFacilityId: pkg.providing_facility_id,
+    participationMode: pkg.participation_mode || 'all',
+    participants: facilities.map(f => ({ facilityId: f.id, facilityName: f.name })),
+    submitted,
+    notSubmitted,
+    samples: samples.map(s => ({ id: s.id, sampleId: s.sample_id })),
+    submissions,
+  });
+});
+
 module.exports = router;

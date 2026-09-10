@@ -236,10 +236,25 @@ router.get('/mine/feedback', requireAuth, requireRole('user'), async (req, res) 
   res.json(visible);
 });
 
-// POST /api/rounds/:roundId/submissions/:subId/query — a Facility User sends a follow-up
-// question about their own submission/feedback to the Facility Admins at the facility that
-// provides this round (the ones who verify/authorize it). This is a direct email relay —
-// nothing is stored server-side, it's a message, not a ticket.
+// Ensure the queries table exists (safe to call repeatedly).
+async function ensureQueriesTable() {
+  await pool.query(`
+    create table if not exists submission_queries (
+      id serial primary key,
+      round_id integer not null references rounds(id) on delete cascade,
+      submission_id integer not null references submissions(id) on delete cascade,
+      from_facility_id integer not null references facilities(id) on delete cascade,
+      from_user_id integer references users(id) on delete set null,
+      sample_id text,
+      message text not null,
+      created_at timestamptz not null default now(),
+      read_at timestamptz,
+      read_by integer references users(id) on delete set null
+    )`);
+}
+
+// POST /api/rounds/:roundId/submissions/:subId/query — Facility User follow-up about their
+// own submission. Stored for in-app notification at the providing facility, and emailed.
 router.post('/:roundId/submissions/:subId/query', requireAuth, requireRole('user'), async (req, res) => {
   const message = (req.body.message || '').trim();
   if (!message) return res.status(400).json({ error: 'Enter a message before sending.' });
@@ -263,26 +278,79 @@ router.post('/:roundId/submissions/:subId/query', requireAuth, requireRole('user
   const { rows: facRows } = await pool.query('select name from facilities where id = $1', [req.user.facilityId]);
   const facilityName = facRows[0] ? facRows[0].name : 'Unknown facility';
 
+  await ensureQueriesTable();
+  await pool.query(
+    `insert into submission_queries
+       (round_id, submission_id, from_facility_id, from_user_id, sample_id, message)
+     values ($1, $2, $3, $4, $5, $6)`,
+    [round.id, submission.id, req.user.facilityId, req.user.id, round.sample_id || null, message]
+  );
+
   const { rows: recipientRows } = await pool.query(
     `select email from users where facility_id = $1 and role = 'facilityadmin' and status = 'active' and email is not null`,
     [round.providing_facility_id]
   );
-  if (recipientRows.length === 0) {
-    return res.status(400).json({ error: 'No administrator contact is currently available for this round\'s facility.' });
-  }
 
   const { rows: providerRows } = await pool.query('select name from facilities where id = $1', [round.providing_facility_id]);
   const providerName = providerRows[0] ? providerRows[0].name : 'the providing facility';
 
-  await Promise.all(recipientRows.map(r => sendFollowUpQueryEmail({
-    to: r.email,
-    personnelName: req.user.name,
-    facilityName,
-    messageBody: message,
-    context: roundLabel(round),
-  })));
+  if (recipientRows.length) {
+    await Promise.all(recipientRows.map(r => sendFollowUpQueryEmail({
+      to: r.email,
+      personnelName: req.user.name,
+      facilityName,
+      messageBody: message,
+      context: `${roundLabel(round)} — Sample ${round.sample_id || ''}`.trim(),
+    })));
+  }
 
   res.json({ message: `Your query has been sent to ${providerName}.` });
+});
+
+// GET /api/rounds/queries/inbox — Facility Admin at the providing facility: open queries.
+router.get('/queries/inbox', requireAuth, requireRole('facilityadmin'), async (req, res) => {
+  await ensureQueriesTable();
+  const { rows } = await pool.query(
+    `select q.*, r.sample_id as round_sample_id, r.test_id, r.providing_facility_id,
+            f.name as from_facility_name, u.name as from_user_name
+     from submission_queries q
+     join rounds r on r.id = q.round_id
+     left join facilities f on f.id = q.from_facility_id
+     left join users u on u.id = q.from_user_id
+     where r.providing_facility_id = $1
+     order by q.created_at desc
+     limit 100`,
+    [req.user.facilityId]
+  );
+  res.json(rows.map(q => ({
+    id: q.id,
+    roundId: q.round_id,
+    submissionId: q.submission_id,
+    sampleId: q.sample_id || q.round_sample_id,
+    testId: q.test_id,
+    message: q.message,
+    fromFacilityId: q.from_facility_id,
+    fromFacilityName: q.from_facility_name,
+    fromUserName: q.from_user_name,
+    createdAt: q.created_at,
+    readAt: q.read_at,
+    unread: !q.read_at,
+  })));
+});
+
+// POST /api/rounds/queries/:id/read — mark a query as read.
+router.post('/queries/:id/read', requireAuth, requireRole('facilityadmin'), async (req, res) => {
+  await ensureQueriesTable();
+  const { rows } = await pool.query(
+    `update submission_queries q
+       set read_at = now(), read_by = $1
+      from rounds r
+     where q.id = $2 and q.round_id = r.id and r.providing_facility_id = $3
+     returning q.*`,
+    [req.user.id, req.params.id, req.user.facilityId]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Query not found.' });
+  res.json({ ok: true });
 });
 
 // POST /api/rounds/:roundId/submissions/:subId/feedback — Facility Admin evaluates a result.
