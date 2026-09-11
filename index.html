@@ -421,7 +421,12 @@
           <button class="primary" id="addFacilityBtn">Add facility</button>
         </div>
         <div class="card">
-          <h3 class="subsection" style="margin-top:0;">All facilities</h3>
+          <h3 class="subsection" style="margin-top:0;">Facilities</h3>
+          <div class="btn-row" style="margin:0 0 12px 0;" id="facilityFilterRow">
+            <button type="button" class="secondary small facility-filter active" data-filter="all">All facilities</button>
+            <button type="button" class="secondary small facility-filter" data-filter="government">Government</button>
+            <button type="button" class="secondary small facility-filter" data-filter="private">Private</button>
+          </div>
           <div id="facilitiesList"></div>
         </div>
       </div>
@@ -926,10 +931,24 @@ function refreshCountdownsIfVisible(){
 }
 
 /* ---------------- SUPER ADMIN: Facilities ---------------- */
+let facilityListFilter = 'all'; // all | government | private
 function renderFacilities(){
   const el = document.getElementById('facilitiesList');
+  document.querySelectorAll('.facility-filter').forEach(b=>{
+    b.classList.toggle('active', b.dataset.filter === facilityListFilter);
+  });
+  const filtered = FACILITIES.filter(f=>{
+    if(facilityListFilter === 'all') return true;
+    const t = f.facilityType === 'private' ? 'private' : 'government';
+    return t === facilityListFilter;
+  });
   if(FACILITIES.length===0){ el.innerHTML = '<div class="empty">No facilities yet.</div>'; return; }
-  el.innerHTML = FACILITIES.map(f=>{
+  if(filtered.length===0){
+    const label = facilityListFilter === 'private' ? 'private' : 'government';
+    el.innerHTML = `<div class="empty">No ${label} facilities in the list.</div>`;
+    return;
+  }
+  el.innerHTML = filtered.map(f=>{
     const userCount = USERS.filter(u=>u.facilityId===f.id).length;
     const typeLabel = f.facilityType === 'private' ? 'Private' : 'Government';
     const disabledBadge = f.active===false ? `<span class="badge" style="background:#eee;color:#666;">Disabled</span>` : '';
@@ -987,6 +1006,12 @@ function renderFacilities(){
     });
   });
 }
+document.querySelectorAll('.facility-filter').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    facilityListFilter = btn.dataset.filter;
+    renderFacilities();
+  });
+});
 document.getElementById('addFacilityBtn').addEventListener('click', async ()=>{
   const name = document.getElementById('newFacilityName').value.trim();
   const town = document.getElementById('newFacilityTown').value.trim();
