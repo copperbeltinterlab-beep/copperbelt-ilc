@@ -2015,6 +2015,16 @@ function collectResult(testId, container){
   };
   const o = {};
   t.fields.forEach(f=>o[f.key]=fieldObj(f));
+  // Bacterial Growth: no growth → downstream analytes are not applicable
+  if(testId === 'bacterialgrowth'){
+    const g = o.growth;
+    const noGrowth = (g && g.notPerformed) || (g && g.value === 'No growth obtained');
+    if(noGrowth){
+      BACTERIAL_GROWTH_DEPENDENT_KEYS.forEach(key=>{
+        o[key] = { value: null, notPerformed: false, reason: null, notApplicable: true };
+      });
+    }
+  }
   return o;
 }
 // Returns a list of field labels currently marked Test Not Performed without a reason selected.
@@ -2060,6 +2070,73 @@ function wireNotPerformedCheckboxes(container){
     sync();
   });
 }
+
+// Bacterial Growth: when "No growth obtained" is selected (or Growth is Not Performed),
+// disable Gram Reaction, Cell Arrangement, and Bacterial Identification.
+const BACTERIAL_GROWTH_DEPENDENT_KEYS = ['gram', 'arrangement', 'bacterialId'];
+function wireBacterialGrowthDependencies(container){
+  const growthSel = container.querySelector('#rf_growth');
+  if(!growthSel) return;
+
+  const apply = ()=>{
+    const growthCb = container.querySelector('.not-performed-cb[data-field="growth"]');
+    const growthNP = growthCb && growthCb.checked;
+    const noGrowth = growthNP || growthSel.value === 'No growth obtained';
+
+    BACTERIAL_GROWTH_DEPENDENT_KEYS.forEach(key=>{
+      const control = container.querySelector('#rf_'+key);
+      const other = container.querySelector('#rf_'+key+'_other');
+      const npCb = container.querySelector(`.not-performed-cb[data-field="${key}"]`);
+      const reasonSel = container.querySelector(`.np-reason-select[data-field="${key}"]`);
+      const row = control ? control.closest('.field-row') : null;
+
+      if(control){
+        if(noGrowth){
+          control.value = '';
+          control.disabled = true;
+        } else if(!(npCb && npCb.checked)){
+          control.disabled = false;
+        }
+      }
+      if(other){
+        if(noGrowth){
+          other.value = '';
+          other.disabled = true;
+          other.style.display = 'none';
+        } else if(!(npCb && npCb.checked)){
+          other.disabled = false;
+        }
+      }
+      if(npCb){
+        if(noGrowth){
+          npCb.checked = false;
+          npCb.disabled = true;
+        } else {
+          npCb.disabled = false;
+        }
+      }
+      if(reasonSel){
+        if(noGrowth){
+          reasonSel.value = '';
+          reasonSel.style.display = 'none';
+          reasonSel.disabled = true;
+        } else {
+          reasonSel.disabled = false;
+        }
+      }
+      if(row){
+        row.style.opacity = noGrowth ? '0.45' : '';
+        row.style.pointerEvents = noGrowth ? 'none' : '';
+      }
+    });
+  };
+
+  growthSel.addEventListener('change', apply);
+  const growthCb = container.querySelector('.not-performed-cb[data-field="growth"]');
+  if(growthCb) growthCb.addEventListener('change', apply);
+  apply();
+}
+
 
 function renderSamplePanelHtml(pkg, sample, mine, expanded){
   const locked = mine && mine.status === 'submitted';
@@ -2119,6 +2196,7 @@ function wireSamplePanel(pkg, sample, container){
   const mine = MY_PACKAGE_SUBMISSIONS[sample.id];
   const locked = mine && mine.status === 'submitted';
   wireNotPerformedCheckboxes(container);
+  if(pkg.testId === 'bacterialgrowth') wireBacterialGrowthDependencies(container);
   container.querySelector('.p-accepted').addEventListener('change', ()=>{ togglePanelRejection(container); updatePanelStatus(pkg, sample, container); });
   container.querySelector('.p-rejected').addEventListener('change', ()=>{ togglePanelRejection(container); updatePanelStatus(pkg, sample, container); });
   container.addEventListener('input', ()=>updatePanelStatus(pkg, sample, container));
@@ -2217,10 +2295,15 @@ function collectSamplePayload(pkg, sample, container, finalize){
       const missingReasons = missingNotPerformedReasons(pkg.testId, container);
       if(missingReasons.length) errors.push(`Sample ${sample.sampleId}: select a reason for "Test Not Performed" — ${missingReasons.join(', ')}.`);
       const testDef = testById(pkg.testId);
+      const growthFs = result.growth;
+      const noGrowth = pkg.testId === 'bacterialgrowth' && growthFs && (
+        growthFs.notPerformed || growthFs.value === 'No growth obtained'
+      );
       const missingSlots = testDef.fields.filter(f=>{
+        if(noGrowth && BACTERIAL_GROWTH_DEPENDENT_KEYS.includes(f.key)) return false;
         const fs = result[f.key];
         if(!fs) return true;
-        if(fs.notPerformed) return false; // already covered by missingReasons above
+        if(fs.notPerformed || fs.notApplicable) return false;
         return fs.value === null || fs.value === undefined || fs.value === '';
       });
       if(missingSlots.length) errors.push(`Sample ${sample.sampleId}: every result slot is required — missing ${missingSlots.map(f=>f.label).join(', ')}.`);
