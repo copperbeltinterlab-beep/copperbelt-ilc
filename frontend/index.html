@@ -619,6 +619,21 @@
   </main>
 </div>
 
+
+<div id="reopenModal" style="display:none; position:fixed; inset:0; background:rgba(18,33,31,0.45); z-index:100; align-items:center; justify-content:center;">
+  <div class="card" style="max-width:420px; width:92%; margin:40px auto; box-shadow:0 12px 40px rgba(0,0,0,.2);">
+    <h3 class="subsection" style="margin-top:0;">Reopen ILC round</h3>
+    <p class="note" id="reopenModalNote" style="margin-bottom:12px;"></p>
+    <label>New submission deadline *</label>
+    <input type="date" id="reopenDeadline">
+    <label>Reason for reopening *</label>
+    <textarea id="reopenReason" rows="3" placeholder="e.g. Closed early by mistake; labs still need to submit"></textarea>
+    <div class="btn-row">
+      <button type="button" class="primary" id="reopenConfirmBtn">Reopen with new deadline</button>
+      <button type="button" class="secondary" id="reopenCancelBtn">Cancel</button>
+    </div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 <div id="printArea"></div>
 
@@ -743,6 +758,50 @@ function showToast(msg){
 function uid(prefix){ return prefix + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function facilityName(id){ const f = FACILITIES.find(x=>x.id===id); return f ? f.name : '—'; }
 function packageById(id){ return PACKAGES.find(p=>String(p.id)===String(id)); }
+
+let reopenTarget = { id: null, refresh: null };
+function openReopenDialog(packageId, refreshTab){
+  const p = packageById(packageId);
+  if(!p){ showToast('Round not found.'); return; }
+  reopenTarget = { id: packageId, refresh: refreshTab };
+  const test = testById(p.testId);
+  document.getElementById('reopenModalNote').textContent =
+    `${p.label} — ${test ? test.name : p.testId}. Current deadline was ${p.deadline || '—'}. Enter a new deadline so the round stays open.`;
+  const dl = document.getElementById('reopenDeadline');
+  dl.value = p.deadline || '';
+  document.getElementById('reopenReason').value = '';
+  const modal = document.getElementById('reopenModal');
+  modal.style.display = 'flex';
+}
+function closeReopenDialog(){
+  document.getElementById('reopenModal').style.display = 'none';
+  reopenTarget = { id: null, refresh: null };
+}
+document.getElementById('reopenCancelBtn').addEventListener('click', closeReopenDialog);
+document.getElementById('reopenModal').addEventListener('click', (e)=>{
+  if(e.target.id === 'reopenModal') closeReopenDialog();
+});
+document.getElementById('reopenConfirmBtn').addEventListener('click', async ()=>{
+  if(!reopenTarget.id) return;
+  const deadline = (document.getElementById('reopenDeadline').value || '').trim();
+  const reason = (document.getElementById('reopenReason').value || '').trim();
+  if(!deadline){ showToast('Enter a new submission deadline.'); return; }
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(deadline)){ showToast('Deadline must be a valid date.'); return; }
+  if(!reason){ showToast('Enter a reason for reopening.'); return; }
+  try{
+    await api(`/round-packages/${reopenTarget.id}/reopen`, {
+      method:'POST',
+      body: { deadline, deadlineReason: reason }
+    });
+    showToast('Round reopened with new deadline ' + deadline + '.');
+    closeReopenDialog();
+    PACKAGES = await api('/round-packages');
+    if(reopenTarget.refresh === 'allrounds') renderAllRounds();
+    else if(reopenTarget.refresh === 'provide') renderProvide();
+    else renderCurrentTab();
+  }catch(e){ showToast(e.message); }
+});
+
 // Reverse-lookup: given a flat sample/round id, find its parent package (undefined for any
 // pre-packaging round that somehow has no parent — shouldn't happen after the Phase 8 backfill).
 function packageForRoundId(roundId){ return PACKAGES.find(p=>p.samples.some(s=>String(s.id)===String(roundId))); }
@@ -1440,35 +1499,7 @@ function renderProvide(){
     });
   });
   el.querySelectorAll('.pkg-reopen').forEach(btn=>{
-    btn.addEventListener('click', async ()=>{
-      const p = packageById(btn.dataset.id);
-      const newDeadline = prompt(
-        `Reopen ${p.label} — ${testById(p.testId).name}\n\nEnter a new submission deadline (YYYY-MM-DD).\nCurrent deadline was: ${p.deadline || '—'}`,
-        p.deadline || ''
-      );
-      if(!newDeadline) return;
-      if(!/^\d{4}-\d{2}-\d{2}$/.test(newDeadline.trim())){
-        showToast('Deadline must be YYYY-MM-DD.');
-        return;
-      }
-      const reason = prompt('Reason for reopening / new deadline (required):');
-      if(!reason || !reason.trim()){ showToast('A reason is required to reopen with a new deadline.'); return; }
-      try{
-        await api(`/round-packages/${btn.dataset.id}/reopen`, {
-          method:'POST',
-          body: { deadline: newDeadline.trim(), deadlineReason: reason.trim() }
-        });
-        showToast('Round reopened with new deadline ' + newDeadline.trim() + '.');
-        PACKAGES = await api('/round-packages');
-        renderProvide();
-      }catch(e){ showToast(e.message); }
-    });
-  });
-        showToast('Round reopened.');
-        PACKAGES = await api('/round-packages');
-        renderProvide();
-      }catch(e){ showToast(e.message); }
-    });
+    btn.addEventListener('click', ()=>openReopenDialog(btn.dataset.id, 'provide'));
   });
   el.querySelectorAll('.pkg-request-delete').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
@@ -1643,35 +1674,7 @@ function renderAllRounds(){
     });
   });
   el.querySelectorAll('.pkg-reopen-admin').forEach(btn=>{
-    btn.addEventListener('click', async ()=>{
-      const p = packageById(btn.dataset.id);
-      const newDeadline = prompt(
-        `Reopen ${p.label} — ${testById(p.testId).name}\n\nEnter a new submission deadline (YYYY-MM-DD).\nCurrent deadline was: ${p.deadline || '—'}`,
-        p.deadline || ''
-      );
-      if(!newDeadline) return;
-      if(!/^\d{4}-\d{2}-\d{2}$/.test(newDeadline.trim())){
-        showToast('Deadline must be YYYY-MM-DD.');
-        return;
-      }
-      const reason = prompt('Reason for reopening / new deadline (required):');
-      if(!reason || !reason.trim()){ showToast('A reason is required to reopen with a new deadline.'); return; }
-      try{
-        await api(`/round-packages/${btn.dataset.id}/reopen`, {
-          method:'POST',
-          body: { deadline: newDeadline.trim(), deadlineReason: reason.trim() }
-        });
-        showToast('Round reopened with new deadline ' + newDeadline.trim() + '.');
-        PACKAGES = await api('/round-packages');
-        renderAllRounds();
-      }catch(e){ showToast(e.message); }
-    });
-  });
-        showToast('Round reopened.');
-        PACKAGES = await api('/round-packages');
-        renderAllRounds();
-      }catch(e){ showToast(e.message); }
-    });
+    btn.addEventListener('click', ()=>openReopenDialog(btn.dataset.id, 'allrounds'));
   });
   el.querySelectorAll('.pkg-dismiss-delete-admin').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
