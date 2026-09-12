@@ -1441,8 +1441,29 @@ function renderProvide(){
   });
   el.querySelectorAll('.pkg-reopen').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
+      const p = packageById(btn.dataset.id);
+      const newDeadline = prompt(
+        `Reopen ${p.label} — ${testById(p.testId).name}\n\nEnter a new submission deadline (YYYY-MM-DD).\nCurrent deadline was: ${p.deadline || '—'}`,
+        p.deadline || ''
+      );
+      if(!newDeadline) return;
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(newDeadline.trim())){
+        showToast('Deadline must be YYYY-MM-DD.');
+        return;
+      }
+      const reason = prompt('Reason for reopening / new deadline (required):');
+      if(!reason || !reason.trim()){ showToast('A reason is required to reopen with a new deadline.'); return; }
       try{
-        await api(`/round-packages/${btn.dataset.id}/reopen`, { method:'POST' });
+        await api(`/round-packages/${btn.dataset.id}/reopen`, {
+          method:'POST',
+          body: { deadline: newDeadline.trim(), deadlineReason: reason.trim() }
+        });
+        showToast('Round reopened with new deadline ' + newDeadline.trim() + '.');
+        PACKAGES = await api('/round-packages');
+        renderProvide();
+      }catch(e){ showToast(e.message); }
+    });
+  });
         showToast('Round reopened.');
         PACKAGES = await api('/round-packages');
         renderProvide();
@@ -1623,8 +1644,29 @@ function renderAllRounds(){
   });
   el.querySelectorAll('.pkg-reopen-admin').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
+      const p = packageById(btn.dataset.id);
+      const newDeadline = prompt(
+        `Reopen ${p.label} — ${testById(p.testId).name}\n\nEnter a new submission deadline (YYYY-MM-DD).\nCurrent deadline was: ${p.deadline || '—'}`,
+        p.deadline || ''
+      );
+      if(!newDeadline) return;
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(newDeadline.trim())){
+        showToast('Deadline must be YYYY-MM-DD.');
+        return;
+      }
+      const reason = prompt('Reason for reopening / new deadline (required):');
+      if(!reason || !reason.trim()){ showToast('A reason is required to reopen with a new deadline.'); return; }
       try{
-        await api(`/round-packages/${btn.dataset.id}/reopen`, { method:'POST' });
+        await api(`/round-packages/${btn.dataset.id}/reopen`, {
+          method:'POST',
+          body: { deadline: newDeadline.trim(), deadlineReason: reason.trim() }
+        });
+        showToast('Round reopened with new deadline ' + newDeadline.trim() + '.');
+        PACKAGES = await api('/round-packages');
+        renderAllRounds();
+      }catch(e){ showToast(e.message); }
+    });
+  });
         showToast('Round reopened.');
         PACKAGES = await api('/round-packages');
         renderAllRounds();
@@ -2016,6 +2058,10 @@ function dynamicFieldsHtml(testId, existing){
     } else {
       control = `<label>${f.label}${f.unit?` (${f.unit})`:''}</label><input type="number" step="any" class="mono" id="rf_${f.key}" value="${fs.value}" ${fs.notPerformed?'disabled':''}>`;
     }
+    // Bacterial Growth results are mandatory — no "Test Not Performed" option
+    if(testId === 'bacterialgrowth'){
+      return `<div class="field-row" style="margin-bottom:10px;">${control}</div>`;
+    }
     return notPerformedRow(f.key, control, fs.notPerformed, fs.reason);
   }).join('');
 }
@@ -2324,6 +2370,11 @@ function collectSamplePayload(pkg, sample, container, finalize){
       const noGrowth = pkg.testId === 'bacterialgrowth' && growthFs && (
         growthFs.notPerformed || growthFs.value === 'No growth obtained'
       );
+      if(pkg.testId === 'bacterialgrowth'){
+        if(!growthFs || !growthFs.value){
+          errors.push(`Sample ${sample.sampleId}: Growth result is required.`);
+        }
+      }
       const missingSlots = testDef.fields.filter(f=>{
         if(noGrowth && BACTERIAL_GROWTH_DEPENDENT_KEYS.includes(f.key)) return false;
         const fs = result[f.key];
@@ -2331,7 +2382,12 @@ function collectSamplePayload(pkg, sample, container, finalize){
         if(fs.notPerformed || fs.notApplicable) return false;
         return fs.value === null || fs.value === undefined || fs.value === '';
       });
-      if(missingSlots.length) errors.push(`Sample ${sample.sampleId}: every result slot is required — missing ${missingSlots.map(f=>f.label).join(', ')}.`);
+      if(missingSlots.length){
+        const msg = pkg.testId === 'bacterialgrowth'
+          ? `Sample ${sample.sampleId}: Bacterial Growth results are mandatory — complete ${missingSlots.map(f=>f.label).join(', ')}.`
+          : `Sample ${sample.sampleId}: every result slot is required — missing ${missingSlots.map(f=>f.label).join(', ')}.`;
+        errors.push(msg);
+      }
     }
   }
 

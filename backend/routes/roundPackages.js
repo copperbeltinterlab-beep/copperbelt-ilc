@@ -428,19 +428,54 @@ router.post('/:id/close', requireAuth, requireRole('facilityadmin', 'superadmin'
   res.json(camel(rows[0], children));
 });
 
-// POST /api/round-packages/:id/reopen — admin error-recovery valve. Not destructive: no data
-// was ever removed by closing, this just clears the closed flag so the round becomes active
-// again (e.g. it was closed early by mistake).
+// POST /api/round-packages/:id/reopen — clears the closed flag and requires a new submission
+// deadline so the round does not immediately re-close from an expired date.
 router.post('/:id/reopen', requireAuth, requireRole('facilityadmin', 'superadmin'), async (req, res) => {
   const pkg = await getPackage(req.params.id);
   if (!pkg) return res.status(404).json({ error: 'Round not found.' });
   if (req.user.role === 'facilityadmin' && pkg.providing_facility_id !== req.user.facilityId) {
     return res.status(403).json({ error: 'This round belongs to another facility.' });
   }
+
+  const deadline = (req.body.deadline || '').trim();
+  const deadlineReason = (req.body.deadlineReason || '').trim();
+  if (!deadline) {
+    return res.status(400).json({ error: 'A new submission deadline (YYYY-MM-DD) is required when reopening a round.' });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(deadline)) {
+    return res.status(400).json({ error: 'Deadline must be in YYYY-MM-DD format.' });
+  }
+  if (!deadlineReason) {
+    return res.status(400).json({ error: 'A reason is required when reopening with a new deadline.' });
+  }
+
+  const historyEntry = {
+    at: new Date().toISOString(),
+    by: req.user.id,
+    byName: req.user.name,
+    action: 'reopen',
+    previousDeadline: toDateOnly(pkg.deadline),
+    newDeadline: deadline,
+    reason: deadlineReason,
+  };
+
   const { rows } = await pool.query(
-    `update round_packages set status = 'active', closed_at = null, closed_by = null where id = $1 returning *`,
-    [pkg.id]
+    `update round_packages
+        set status = 'active', closed_at = null, closed_by = null, deadline = $1
+      where id = $2 returning *`,
+    [deadline, pkg.id]
   );
+
+  const children = await getSamples(pkg.id);
+  for (const child of children) {
+    const hist = Array.isArray(child.deadline_history) ? child.deadline_history : [];
+    hist.push(historyEntry);
+    await pool.query(
+      'update rounds set deadline = $1, deadline_history = $2 where id = $3',
+      [deadline, JSON.stringify(hist), child.id]
+    );
+  }
+
   res.json(camel(rows[0], await getSamples(pkg.id)));
 });
 
