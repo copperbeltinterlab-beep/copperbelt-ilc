@@ -244,42 +244,62 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
     status = 'draft';
   }
 
-  const derivedResultStatus = sampleAcceptability === 'rejected' ? 'rejected' : null;
+  // result_status is NOT NULL in the DB — never insert null.
+  // "reported" = at least one real analyte value; "not_performed" = rejected or only NP/empty.
+  let hasAnyRealValue = false;
+  if (sampleAcceptability !== 'rejected' && normalizedResult && typeof normalizedResult === 'object') {
+    for (const key of Object.keys(normalizedResult)) {
+      const v = normalizedResult[key];
+      if (!v || typeof v !== 'object') continue;
+      if (v.notPerformed || v.notApplicable) continue;
+      if (v.value !== null && v.value !== undefined && v.value !== '') {
+        hasAnyRealValue = true;
+        break;
+      }
+    }
+  }
+  const derivedResultStatus =
+    sampleAcceptability === 'rejected' || !hasAnyRealValue ? 'not_performed' : 'reported';
 
-  const { rows } = await pool.query(
-    `insert into submissions
-       (round_id, facility_id, date_received, method_used, sample_condition, received_by,
-        sample_acceptability, sample_rejection_reason, result_status, result,
-        personnel_testing, personnel_verifying, tested_by_user_id, verified_by_user_id,
-        status, saved_at, submitted_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),$16)
-     on conflict (round_id, facility_id) do update set
-       date_received = excluded.date_received,
-       method_used = excluded.method_used,
-       sample_condition = excluded.sample_condition,
-       received_by = excluded.received_by,
-       sample_acceptability = excluded.sample_acceptability,
-       sample_rejection_reason = excluded.sample_rejection_reason,
-       result_status = excluded.result_status,
-       result = excluded.result,
-       personnel_testing = excluded.personnel_testing,
-       personnel_verifying = excluded.personnel_verifying,
-       tested_by_user_id = excluded.tested_by_user_id,
-       verified_by_user_id = excluded.verified_by_user_id,
-       status = excluded.status,
-       saved_at = now(),
-       submitted_at = excluded.submitted_at
-     returning *`,
-    [
-      req.params.roundId, req.user.facilityId,
-      dateReceived || null, methodUsed || null, sampleCondition || null, receivedBy || null,
-      sampleAcceptability || null, sampleRejectionReason || null,
-      derivedResultStatus, normalizedResult,
-      personnelTesting, personnelVerifying, testedByUserId, verifiedByUserId,
-      status, submittedAt,
-    ]
-  );
-  res.json(camel(rows[0]));
+  try {
+    const { rows } = await pool.query(
+      `insert into submissions
+         (round_id, facility_id, date_received, method_used, sample_condition, received_by,
+          sample_acceptability, sample_rejection_reason, result_status, result,
+          personnel_testing, personnel_verifying, tested_by_user_id, verified_by_user_id,
+          status, saved_at, submitted_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),$16)
+       on conflict (round_id, facility_id) do update set
+         date_received = excluded.date_received,
+         method_used = excluded.method_used,
+         sample_condition = excluded.sample_condition,
+         received_by = excluded.received_by,
+         sample_acceptability = excluded.sample_acceptability,
+         sample_rejection_reason = excluded.sample_rejection_reason,
+         result_status = excluded.result_status,
+         result = excluded.result,
+         personnel_testing = excluded.personnel_testing,
+         personnel_verifying = excluded.personnel_verifying,
+         tested_by_user_id = excluded.tested_by_user_id,
+         verified_by_user_id = excluded.verified_by_user_id,
+         status = excluded.status,
+         saved_at = now(),
+         submitted_at = excluded.submitted_at
+       returning *`,
+      [
+        req.params.roundId, req.user.facilityId,
+        dateReceived || null, methodUsed || null, sampleCondition || null, receivedBy || null,
+        sampleAcceptability || null, sampleRejectionReason || null,
+        derivedResultStatus, normalizedResult,
+        personnelTesting, personnelVerifying, testedByUserId, verifiedByUserId,
+        status, submittedAt,
+      ]
+    );
+    res.json(camel(rows[0]));
+  } catch (e) {
+    console.error('Failed to save submission:', e.message);
+    res.status(500).json({ error: e.message || 'Failed to save submission.' });
+  }
 });
 
 router.get('/mine/status', requireAuth, requireRole('user'), async (req, res) => {

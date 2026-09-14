@@ -13,7 +13,24 @@ const submissionRoutes = require('./routes/submissions');
 const app = express();
 
 app.use(helmet());
-app.use(cors({ origin: process.env.FRONTEND_ORIGIN || '*' }));
+// Allow the configured frontend origin (and common local dev). Exact match required by browsers.
+const allowedOrigins = [
+  process.env.FRONTEND_ORIGIN,
+  'https://copperbeltinterlab-beep.github.io',
+  'http://localhost:5500',
+  'http://127.0.0.1:5500',
+].filter(Boolean);
+app.use(cors({
+  origin(origin, cb) {
+    // Non-browser clients (no Origin header) — allow
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) return cb(null, true);
+    // If FRONTEND_ORIGIN unset, fall back to reflecting any origin in development only
+    if (!process.env.FRONTEND_ORIGIN) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+}));
 app.use(express.json());
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
