@@ -31,15 +31,94 @@ function computeQualitativeField(entries) {
   };
 }
 
+function medianOf(sorted) {
+  const n = sorted.length;
+  if (n === 0) return null;
+  const mid = Math.floor(n / 2);
+  if (n % 2 === 1) return sorted[mid];
+  return (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * ISO 13528 Algorithm A (robust mean and robust SD).
+ * One extreme laboratory value is down-weighted so it cannot dominate the consensus.
+ * Returns { mean, sd } (robust estimates; property names kept for existing callers).
+ */
+function robustAlgorithmA(values) {
+  const n = values.length;
+  if (n === 0) return { mean: null, sd: null };
+
+  const sorted = values.slice().sort((a, b) => a - b);
+  let xStar = medianOf(sorted);
+
+  // Initial scale: MAD * 1.483 (consistent for normal data); floor avoids zero SD
+  const absDev = values.map(v => Math.abs(v - xStar)).sort((a, b) => a - b);
+  let sStar = 1.483 * medianOf(absDev);
+  if (!sStar || sStar < 1e-12) {
+    // All values essentially equal — use classical SD or a tiny epsilon
+    const classicalMean = values.reduce((s, v) => s + v, 0) / n;
+    const classicalVar = n > 1
+      ? values.reduce((s, v) => s + Math.pow(v - classicalMean, 2), 0) / (n - 1)
+      : 0;
+    sStar = Math.sqrt(classicalVar);
+    if (sStar < 1e-12) sStar = 0;
+    return { mean: xStar, sd: sStar };
+  }
+
+  // Iterate until robust mean/SD stabilise (ISO 13528 Algorithm A)
+  const maxIter = 50;
+  for (let iter = 0; iter < maxIter; iter++) {
+    const delta = 1.5 * sStar;
+    const winsorized = values.map(v => {
+      if (v < xStar - delta) return xStar - delta;
+      if (v > xStar + delta) return xStar + delta;
+      return v;
+    });
+    const newMean = winsorized.reduce((s, v) => s + v, 0) / n;
+    const sumSq = winsorized.reduce((s, v) => s + Math.pow(v - newMean, 2), 0);
+    // ISO 13528 uses 1.134 as the consistency factor for the winsorized SD estimator
+    const newSd = n > 1 ? 1.134 * Math.sqrt(sumSq / (n - 1)) : 0;
+
+    const meanDiff = Math.abs(newMean - xStar);
+    const sdDiff = Math.abs(newSd - sStar);
+    xStar = newMean;
+    sStar = newSd;
+    if (meanDiff < 1e-9 * (1 + Math.abs(xStar)) && sdDiff < 1e-9 * (1 + sStar)) break;
+  }
+
+  return { mean: xStar, sd: sStar };
+}
+
 function computeQuantitativeField(entries) {
   const n = entries.length;
   if (n < MIN_PARTICIPANTS) {
-    return { n, insufficientData: true, mean: null, sd: null };
+    return {
+      n,
+      insufficientData: true,
+      mean: null,
+      sd: null,
+      method: 'robust_algorithm_a',
+    };
   }
-  const mean = entries.reduce((sum, e) => sum + e.value, 0) / n;
-  const variance = entries.reduce((sum, e) => sum + Math.pow(e.value - mean, 2), 0) / (n - 1);
-  const sd = Math.sqrt(variance);
-  return { n, insufficientData: false, mean, sd };
+  const values = entries.map(e => e.value);
+  const { mean, sd } = robustAlgorithmA(values);
+
+  // Also expose classical mean/SD for transparency in admin reports (not used for scoring)
+  const classicalMean = values.reduce((s, v) => s + v, 0) / n;
+  const classicalVar = n > 1
+    ? values.reduce((s, v) => s + Math.pow(v - classicalMean, 2), 0) / (n - 1)
+    : 0;
+  const classicalSd = Math.sqrt(classicalVar);
+
+  return {
+    n,
+    insufficientData: false,
+    mean, // robust consensus location (Algorithm A)
+    sd,   // robust consensus scale (Algorithm A)
+    method: 'robust_algorithm_a',
+    classicalMean,
+    classicalSd,
+  };
 }
 
 function evaluateQualitative(value, notPerformed, fieldStats) {
@@ -52,35 +131,45 @@ function evaluateQualitative(value, notPerformed, fieldStats) {
 
 function evaluateQuantitative(value, notPerformed, fieldStats) {
   if (notPerformed) return { status: 'not_performed' };
-  if (value === null || value === undefined || value === '' || isNaN(Number(value))) return { status: 'not_performed' };
-  if (fieldStats.insufficientData) return { status: 'not_evaluated', reason: 'Insufficient participants for consensus.' };
-  const numValue = Number(value);
-  let sdi;
-  if (fieldStats.sd === 0) {
-    sdi = numValue === fieldStats.mean ? 0 : Infinity;
-  } else {
-    sdi = (numValue - fieldStats.mean) / fieldStats.sd;
+  if (value === null || value === undefined || value === '' || isNaN(Number(value))) {
+    return { status: 'not_performed' };
   }
-  return { status: Math.abs(sdi) <= SDI_LIMIT ? 'acceptable' : 'unacceptable', sdi };
+  if (fieldStats.insufficientData) {
+    return { status: 'not_evaluated', reason: 'Insufficient participants for consensus.', sdi: null };
+  }
+  const num = Number(value);
+  const mean = fieldStats.mean;
+  const sd = fieldStats.sd;
+  if (sd === 0 || sd === null || sd === undefined) {
+    // All participants identical (or zero robust scale): exact match only
+    const match = Math.abs(num - mean) < 1e-9;
+    return { status: match ? 'acceptable' : 'unacceptable', sdi: match ? 0 : Infinity };
+  }
+  const sdi = (num - mean) / sd;
+  const status = Math.abs(sdi) <= SDI_LIMIT ? 'acceptable' : 'unacceptable';
+  return { status, sdi };
 }
 
 function overallStatus(fieldEvals) {
   const statuses = Object.values(fieldEvals).map(f => f.status);
   if (statuses.length === 0) return 'not_evaluated';
-  if (statuses.every(s => s === 'not_performed')) return 'not_evaluated';
-  if (statuses.includes('unacceptable')) return 'unacceptable';
-  if (statuses.includes('not_evaluated')) return 'not_evaluated';
-  return 'acceptable';
+  if (statuses.every(s => s === 'not_performed')) return 'not_performed';
+  if (statuses.some(s => s === 'unacceptable')) return 'unacceptable';
+  if (statuses.some(s => s === 'not_evaluated')) return 'not_evaluated';
+  if (statuses.every(s => s === 'acceptable' || s === 'not_performed')) return 'acceptable';
+  return 'not_evaluated';
 }
 
+// Optional human labels for comment lines (keys only if no richer label map is available)
 function fieldLabel(testId, key) {
-  return key.toUpperCase();
+  return key;
 }
 
 function buildConsensusReport(testId, submissions) {
   const def = getTestDef(testId);
-  if (!def) return { error: `Unknown test definition for "${testId}".` };
+  if (!def) return { error: `Unknown test: ${testId}` };
 
+  // Only non-rejected submissions with results contribute to consensus
   const reportable = submissions.filter(s => s.sampleAcceptability !== 'rejected');
 
   const fieldStats = {};
@@ -97,12 +186,20 @@ function buildConsensusReport(testId, submissions) {
         }
       }
     });
-    fieldStats[key] = def.kind === 'quantitative' ? computeQuantitativeField(entries) : computeQualitativeField(entries);
+    fieldStats[key] = def.kind === 'quantitative'
+      ? computeQuantitativeField(entries)
+      : computeQualitativeField(entries);
   });
 
   const perSubmission = submissions.map(s => {
     if (s.sampleAcceptability === 'rejected') {
-      return { submissionId: s.id, facilityId: s.facilityId, overall: 'not_evaluated', fields: {}, comment: 'Sample rejected on receipt — no results expected.' };
+      return {
+        submissionId: s.id,
+        facilityId: s.facilityId,
+        overall: 'not_evaluated',
+        fields: {},
+        comment: 'Sample rejected on receipt — no results expected.',
+      };
     }
     const fieldEvals = {};
     const commentLines = [];
@@ -118,12 +215,19 @@ function buildConsensusReport(testId, submissions) {
       if (evalResult.status === 'not_performed') {
         commentLines.push(`${label}: Test Not Performed`);
       } else if (def.kind === 'quantitative') {
-        const sdiText = evalResult.sdi === undefined ? '' : ` (SDI ${evalResult.sdi === Infinity ? '∞' : evalResult.sdi.toFixed(2)})`;
-        const meanText = stats.insufficientData ? 'insufficient data' : `group mean ${stats.mean.toFixed(2)} ± ${stats.sd.toFixed(2)}`;
+        const sdiText = evalResult.sdi === undefined || evalResult.sdi === null
+          ? ''
+          : ` (SDI ${evalResult.sdi === Infinity ? '∞' : evalResult.sdi.toFixed(2)})`;
+        const meanText = stats.insufficientData
+          ? 'insufficient data'
+          : `robust mean ${Number(stats.mean).toFixed(2)} ± ${Number(stats.sd).toFixed(2)} (Alg. A, n=${stats.n})`;
         commentLines.push(`${label}: ${value} — ${meanText}${sdiText} → ${evalResult.status}`);
       } else {
-        const consensusText = stats.insufficientData ? 'insufficient data'
-          : stats.tie ? 'no clear consensus' : `consensus ${stats.consensusValue} (${stats.percentAgreement}% agreement, n=${stats.n})`;
+        const consensusText = stats.insufficientData
+          ? 'insufficient data'
+          : stats.tie
+            ? 'no clear consensus'
+            : `consensus ${stats.consensusValue} (${stats.percentAgreement}% agreement, n=${stats.n})`;
         commentLines.push(`${label}: ${value} — ${consensusText} → ${evalResult.status}`);
       }
     });
@@ -139,4 +243,11 @@ function buildConsensusReport(testId, submissions) {
   return { fieldStats, perSubmission };
 }
 
-module.exports = { buildConsensusReport, readField };
+module.exports = {
+  buildConsensusReport,
+  readField,
+  robustAlgorithmA,
+  computeQuantitativeField,
+  SDI_LIMIT,
+  MIN_PARTICIPANTS,
+};
