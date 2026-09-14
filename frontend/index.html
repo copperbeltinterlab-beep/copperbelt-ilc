@@ -496,6 +496,7 @@
         <div class="card">
           <label>Test</label>
           <select id="newRoundTest"></select>
+          <div class="note" id="pairedTestNote" style="display:none; margin-top:8px;"></div>
           <label>ILC Year</label>
           <select id="newRoundYear"></select>
           <div class="meta" id="newRoundLabelPreview" style="margin:2px 0 8px;"></div>
@@ -665,8 +666,10 @@ const TESTS = [
     {key:'ahg', label:'Cross match — AHG', options:['Compatible','Incompatible']},
   ]},
   { id:'hiv', name:'HIV Serology', kind:'categorical', fields:[{key:'value', label:'Result', options:SEROLOGY_OPTIONS_HIV}] },
+  { id:'hivconf', name:'HIV Serology (Confirmatory)', kind:'categorical', fields:[{key:'value', label:'Result', options:['Reactive','Non-Reactive','N/A']}] },
   { id:'hbsag', name:'HBsAg Serology', kind:'categorical', fields:[{key:'value', label:'Result', options:SEROLOGY_OPTIONS}] },
   { id:'rpr', name:'RPR Serology', kind:'categorical', fields:[{key:'value', label:'Result', options:SEROLOGY_OPTIONS}] },
+  { id:'rprtitre', name:'RPR (Titre)', kind:'categorical', fields:[{key:'value', label:'Titre', options:['1:1','1:2','1:4','1:8','1:16','1:32','1:64','1:128','N/A']}] },
   { id:'pregnancy', name:'Pregnancy Test', kind:'categorical', fields:[{key:'value', label:'Result', options:SEROLOGY_OPTIONS}] },
   { id:'mtbrif', name:'MTB Rif (GeneXpert)', kind:'categorical', fields:[
     {key:'mtb', label:'Mycobacterium Tuberculosis', options:['MTB Not Detected','MTB Detected']},
@@ -728,6 +731,17 @@ const TESTS = [
 ];
 function testById(id){ return TESTS.find(t=>t.id===id); }
 
+// When a Facility Admin creates a round for these parent tests, the companion test is
+// created automatically with the same samples, deadline, and participation list.
+const PAIRED_ROUND_TESTS = {
+  hiv: 'hivconf',   // HIV Serology → HIV Serology (Confirmatory)
+  rpr: 'rprtitre',  // RPR Serology → RPR (Titre)
+};
+function companionTestId(testId){
+  return PAIRED_ROUND_TESTS[testId] || null;
+}
+
+
 /* ---------------- API config & helpers ---------------- */
 // Point this at your deployed backend, e.g. 'https://copperbelt-ilc-api.onrender.com/api'
 const API_BASE = 'https://copperbelt-ilc.onrender.com/api';
@@ -758,7 +772,7 @@ function showToast(msg){
   setTimeout(()=>t.classList.remove('show'), 2200);
 }
 function uid(prefix){ return prefix + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
-function facilityName(id){ const f = FACILITIES.find(x=>x.id===id); return f ? f.name : '—'; }
+function facilityName(id){ const f = FACILITIES.find(x=>x.id===id); return f ? ((f.facilityCode ? f.facilityCode + ' · ' : '') + f.name) : '—'; }
 function packageById(id){ return PACKAGES.find(p=>String(p.id)===String(id)); }
 
 let reopenTarget = { id: null, refresh: null };
@@ -1014,7 +1028,7 @@ function renderFacilities(){
     const typeLabel = f.facilityType === 'private' ? 'Private' : 'Government';
     const disabledBadge = f.active===false ? `<span class="badge" style="background:#eee;color:#666;">Disabled</span>` : '';
     return `<div class="row-item" style="flex-wrap:wrap; gap:8px;">
-      <div><strong>${f.name}</strong><div class="meta">${f.town||''} · ${typeLabel} ${disabledBadge}</div></div>
+      <div><strong><span class="badge role" style="margin-right:6px;">${f.facilityCode || '—'}</span>${f.name}</strong><div class="meta">${f.town||''} · ${typeLabel} ${disabledBadge}</div></div>
       <div style="display:flex; gap:6px; align-items:center;">
         <span class="meta">${userCount} user${userCount===1?'':'s'}</span>
         <button class="secondary small edit-facility" data-id="${f.id}">Edit</button>
@@ -1404,9 +1418,34 @@ async function downloadPackageInstructionsFile(packageId, fileName){
 }
 
 let provideSubTab = 'active';
+function updatePairedTestNote(){
+  const note = document.getElementById('pairedTestNote');
+  if(!note) return;
+  const testId = document.getElementById('newRoundTest').value;
+  const companion = companionTestId(testId);
+  if(!companion){
+    note.style.display = 'none';
+    note.textContent = '';
+    return;
+  }
+  const parent = testById(testId);
+  const child = testById(companion);
+  note.style.display = 'block';
+  note.innerHTML = `<strong>${parent.name}</strong> is paired with <strong>${child.name}</strong>. Creating this round will also create a matching round for ${child.name} (same samples, deadline, and participants).`;
+}
 function renderProvide(){
   const testSel = document.getElementById('newRoundTest');
-  testSel.innerHTML = TESTS.map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
+  // Parent HIV/RPR are listed; companions are still listed but creating the parent auto-adds them.
+  testSel.innerHTML = TESTS.map(t=>{
+    const companion = companionTestId(t.id);
+    const label = companion ? `${t.name} (+ ${testById(companion).name})` : t.name;
+    return `<option value="${t.id}">${label}</option>`;
+  }).join('');
+  if(!testSel.dataset.pairWired){
+    testSel.addEventListener('change', updatePairedTestNote);
+    testSel.dataset.pairWired = '1';
+  }
+  updatePairedTestNote();
   const yearSel = document.getElementById('newRoundYear');
   if(!yearSel.dataset.populated){
     const nowYear = new Date().getFullYear();
@@ -1589,15 +1628,47 @@ document.getElementById('addRoundBtn').addEventListener('click', async ()=>{
   if(participationMode==='selected') formData.append('participantFacilityIds', JSON.stringify(participantFacilityIds));
   formData.append('instructionsFile', fileInput.files[0]);
 
-  try{
+  async function postRoundPackage(fd){
     const res = await fetch(API_BASE + '/round-packages', {
       method: 'POST',
       headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
-      body: formData,
+      body: fd,
     });
-    const created = await res.json();
-    if(!res.ok) throw new Error(created.error || 'Failed to create round.');
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Failed to create round.');
+    return data;
+  }
+
+  try{
+    const created = await postRoundPackage(formData);
     PACKAGES.push(created);
+    const names = [`${created.label} — ${testById(created.testId).name}`];
+
+    const companion = companionTestId(testId);
+    if(companion){
+      const formData2 = new FormData();
+      formData2.append('testId', companion);
+      formData2.append('year', year);
+      formData2.append('deadline', deadline);
+      formData2.append('sampleIds', JSON.stringify(sampleIds));
+      formData2.append('participationMode', participationMode);
+      if(participationMode==='selected') formData2.append('participantFacilityIds', JSON.stringify(participantFacilityIds));
+      // Same instructions file for the paired round
+      formData2.append('instructionsFile', fileInput.files[0]);
+      try{
+        const created2 = await postRoundPackage(formData2);
+        PACKAGES.push(created2);
+        names.push(`${created2.label} — ${testById(created2.testId).name}`);
+      }catch(pairErr){
+        showToast(`Main round created, but paired ${testById(companion).name} failed: ${pairErr.message}`);
+        ROUNDS = await api('/rounds');
+        provideSubTab = 'active';
+        document.querySelectorAll('.provide-subtab').forEach(b=>b.classList.toggle('active', b.dataset.status==='active'));
+        renderProvide();
+        return;
+      }
+    }
+
     ROUNDS = await api('/rounds');
     document.getElementById('newRoundDeadline').value = '';
     fileInput.value = '';
@@ -1605,7 +1676,9 @@ document.getElementById('addRoundBtn').addEventListener('click', async ()=>{
     document.getElementById('participantFacilityList').style.display = 'none';
     document.querySelectorAll('.participant-facility-cb').forEach(cb=>cb.checked=false);
     document.querySelectorAll('.new-round-sample-name').forEach(i=>i.value='');
-    showToast(`${created.label} — ${testById(created.testId).name} — ${created.samples.length} samples created.`);
+    showToast(names.length > 1
+      ? `Created paired rounds: ${names.join(' + ')} (${created.samples.length} samples each).`
+      : `${names[0]} — ${created.samples.length} samples created.`);
     provideSubTab = 'active';
     document.querySelectorAll('.provide-subtab').forEach(b=>b.classList.toggle('active', b.dataset.status==='active'));
     renderProvide();

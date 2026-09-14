@@ -9,8 +9,10 @@
 const TESTS = {
   bloodgroup: { name: 'Blood Grouping and Cross Match', kind: 'qualitative', fields: ['abo', 'rhesus', 'saline', 'ahg'] },
   hiv: { name: 'HIV Serology', kind: 'qualitative', fields: ['value'] },
+  hivconf: { name: 'HIV Serology (Confirmatory)', kind: 'qualitative', fields: ['value'] },
   hbsag: { name: 'HBsAg Serology', kind: 'qualitative', fields: ['value'] },
   rpr: { name: 'RPR Serology', kind: 'qualitative', fields: ['value'] },
+  rprtitre: { name: 'RPR (Titre)', kind: 'qualitative', fields: ['value'] },
   pregnancy: { name: 'Pregnancy Test', kind: 'qualitative', fields: ['value'] },
   mtbrif: { name: 'MTB Rif (GeneXpert)', kind: 'qualitative', fields: ['mtb'] },
   bacterialgrowth: {
