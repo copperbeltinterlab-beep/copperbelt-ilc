@@ -110,6 +110,7 @@ function camelSubmission(s) {
     receivedBy: s.received_by,
     sampleAcceptability: s.sample_acceptability, sampleRejectionReason: s.sample_rejection_reason,
     result: s.result, personnelTesting: s.personnel_testing, personnelVerifying: s.personnel_verifying,
+    testedByUserId: s.tested_by_user_id || null, verifiedByUserId: s.verified_by_user_id || null,
     status: s.status, submittedAt: s.submitted_at, feedback: s.feedback,
   };
 }

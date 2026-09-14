@@ -31,11 +31,36 @@ function camel(s) {
     result: s.result,
     personnelTesting: s.personnel_testing,
     personnelVerifying: s.personnel_verifying,
+    testedByUserId: s.tested_by_user_id || null,
+    verifiedByUserId: s.verified_by_user_id || null,
     status: s.status,
     savedAt: s.saved_at,
     submittedAt: s.submitted_at,
     feedback: s.feedback,
   };
+}
+
+// Dual-control columns + allow pending_verification status (safe to call repeatedly).
+async function ensureDualControlSchema() {
+  await pool.query(`
+    alter table submissions add column if not exists tested_by_user_id integer;
+    alter table submissions add column if not exists verified_by_user_id integer;
+  `);
+  // Relax status check to include pending_verification
+  await pool.query(`
+    do $$ begin
+      alter table submissions drop constraint if exists submissions_status_check;
+    exception when undefined_object then null;
+    end $$;
+  `);
+  await pool.query(`
+    do $$ begin
+      alter table submissions
+        add constraint submissions_status_check
+        check (status in ('draft', 'pending_verification', 'submitted'));
+    exception when duplicate_object then null;
+    end $$;
+  `);
 }
 
 async function getRound(roundId) {
@@ -67,6 +92,7 @@ router.get('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
 // PUT /api/rounds/:roundId/submissions/mine — save draft or submit final result.
 // Facility Users only — this is laboratory result entry, not an admin function.
 router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async (req, res) => {
+  await ensureDualControlSchema();
   const round = await getRound(req.params.roundId);
   if (!round) return res.status(404).json({ error: 'Round not found.' });
   if (!isEligibleParticipant(round, req.user.facilityId)) {
@@ -94,16 +120,48 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
     return res.status(403).json({ error: 'Already submitted — this result is locked.' });
   }
 
+  // action: 'draft' | 'submit_for_verification' | 'verify'
+  // finalize:true is treated as submit_for_verification for backward compatibility.
+  const action = (req.body.action || (req.body.finalize ? 'submit_for_verification' : 'draft')).trim();
+
+  // Verifier step: second user locks the result. Analyst cannot verify their own entry.
+  if (action === 'verify') {
+    if (!existing || existing.status !== 'pending_verification') {
+      return res.status(400).json({ error: 'This sample is not awaiting verification.' });
+    }
+    if (existing.tested_by_user_id && Number(existing.tested_by_user_id) === Number(req.user.id)) {
+      return res.status(403).json({
+        error: 'You entered these results as the analyst. A different user at your facility must log in and verify them.',
+      });
+    }
+    const { rows } = await pool.query(
+      `update submissions set
+         status = 'submitted',
+         personnel_verifying = $1,
+         verified_by_user_id = $2,
+         submitted_at = now(),
+         saved_at = now()
+       where id = $3 returning *`,
+      [req.user.name, req.user.id, existing.id]
+    );
+    return res.json(camel(rows[0]));
+  }
+
+  // Pending verification: freeze edits until verified (or only the original analyst could re-open — we freeze).
+  if (existing && existing.status === 'pending_verification' && action !== 'verify') {
+    return res.status(403).json({
+      error: 'Results are awaiting verification by another user and cannot be edited. Ask a colleague to verify, or contact your Facility Admin.',
+    });
+  }
+
   const {
     dateReceived, methodUsed, sampleCondition, receivedBy,
     sampleAcceptability, sampleRejectionReason,
-    personnelTesting, personnelVerifying, finalize,
   } = req.body;
-  // A rejected sample was never tested — never trust the client to have left the result
-  // object empty; a rejected sample can never carry result data no matter what is sent.
   const result = sampleAcceptability === 'rejected' ? {} : req.body.result;
 
-  if (finalize) {
+  const needsFullValidation = action === 'submit_for_verification';
+  if (needsFullValidation) {
     if (!dateReceived) {
       return res.status(400).json({ error: 'Date sample received is required before final submission.' });
     }
@@ -116,74 +174,85 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
     if (!receivedBy || !receivedBy.trim()) {
       return res.status(400).json({ error: 'Received By is required before final submission.' });
     }
-    if (!['accepted', 'rejected'].includes(sampleAcceptability)) {
+    if (!sampleAcceptability || !['accepted', 'rejected'].includes(sampleAcceptability)) {
       return res.status(400).json({ error: 'Indicate whether the sample was accepted or rejected before results can be submitted.' });
     }
     if (sampleAcceptability === 'rejected' && !(sampleRejectionReason || '').trim()) {
       return res.status(400).json({ error: 'A reason is required when a sample is rejected.' });
     }
-    // A rejected sample has no analytes to test — the mandatory-slots check only applies once
-    // the sample has actually been accepted for testing.
     if (sampleAcceptability === 'accepted') {
-      if (!personnelTesting || !personnelVerifying) {
-        return res.status(400).json({ error: 'Enter both tested-by and results-authorized-by names before final submission.' });
-      }
+      // Validate result slots using same rules as before
       const testDef = getTestDef(round.test_id);
-      const missingLabels = [];
-      if (testDef) {
+      if (testDef && result && typeof result === 'object') {
+        const missing = [];
         for (const key of testDef.fields) {
-          const raw = result ? result[key] : undefined;
-          const hasValue = raw && typeof raw === 'object'
-            ? (raw.notPerformed ? true : (raw.value !== null && raw.value !== undefined && raw.value !== ''))
-            : (raw !== null && raw !== undefined && raw !== '');
-          if (!hasValue) missingLabels.push(key);
-        }
-      }
-      if (missingLabels.length) {
-        return res.status(400).json({ error: `Every result slot is required before submitting. Missing: ${missingLabels.join(', ')}.` });
-      }
-    }
-  }
-
-  // Test Not Performed always requires one of the four approved reasons — enforced here
-  // regardless of finalize, so a draft save can't carry an incomplete not-performed field
-  // either. Any field NOT marked not-performed has its reason normalized to null server-side,
-  // so a result that's since been filled in can never keep a stale, contradictory reason.
-  const normalizedResult = {};
-  if (result && typeof result === 'object') {
-    for (const [key, raw] of Object.entries(result)) {
-      if (raw && typeof raw === 'object' && 'notPerformed' in raw) {
-        if (raw.notPerformed) {
-          if (!NOT_PERFORMED_REASONS.includes(raw.reason)) {
-            return res.status(400).json({ error: `Select a reason for "Test Not Performed" (${key}).` });
+          const v = result[key];
+          if (!v || typeof v !== 'object') { missing.push(key); continue; }
+          if (v.notPerformed || v.notApplicable) {
+            if (v.notPerformed && !(v.reason || '').trim()) {
+              return res.status(400).json({ error: `Select a reason for "Test Not Performed" (${key}).` });
+            }
+            continue;
           }
-          normalizedResult[key] = { value: null, notPerformed: true, reason: raw.reason };
-        } else {
-          normalizedResult[key] = { value: raw.value ?? null, notPerformed: false, reason: null };
+          if (v.value === null || v.value === undefined || v.value === '') missing.push(key);
         }
-      } else {
-        normalizedResult[key] = raw;
+        // Bacterial growth: no growth → dependents not required
+        if (round.test_id === 'bacterialgrowth' && result.growth && result.growth.value === 'No growth obtained') {
+          ['gram', 'arrangement', 'bacterialId'].forEach(k => {
+            const i = missing.indexOf(k);
+            if (i >= 0) missing.splice(i, 1);
+          });
+        }
+        if (missing.length) {
+          return res.status(400).json({ error: `Every result slot is required before submitting. Missing: ${missing.join(', ')}.` });
+        }
       }
     }
   }
 
-  // Derive an internal reported/not_performed summary (used for consensus/statistics later) —
-  // this is computed automatically, never chosen directly by the lab.
-  const hasAnyRealValue = Object.values(normalizedResult).some(v => {
-    if (v && typeof v === 'object') return v.value !== null && v.value !== undefined && v.value !== '' && !v.notPerformed;
-    return v !== null && v !== undefined && v !== '';
-  });
-  const derivedResultStatus = (sampleAcceptability === 'rejected' || !hasAnyRealValue) ? 'not_performed' : 'reported';
+  // Normalize not-performed reasons on any save
+  let normalizedResult = result || {};
+  if (normalizedResult && typeof normalizedResult === 'object') {
+    for (const key of Object.keys(normalizedResult)) {
+      const v = normalizedResult[key];
+      if (v && typeof v === 'object' && v.notPerformed) {
+        if (needsFullValidation && !(v.reason || '').trim()) {
+          return res.status(400).json({ error: `Select a reason for "Test Not Performed" (${key}).` });
+        }
+        if (v.reason && !NOT_PERFORMED_REASONS.includes(v.reason)) {
+          return res.status(400).json({ error: `Invalid Test Not Performed reason for ${key}.` });
+        }
+      }
+    }
+  }
 
-  const status = finalize ? 'submitted' : 'draft';
-  const submittedAt = finalize ? new Date().toISOString() : (existing ? existing.submitted_at : null);
+  let status = 'draft';
+  let personnelTesting = existing ? existing.personnel_testing : null;
+  let personnelVerifying = existing ? existing.personnel_verifying : null;
+  let testedByUserId = existing ? existing.tested_by_user_id : null;
+  let verifiedByUserId = existing ? existing.verified_by_user_id : null;
+  let submittedAt = existing ? existing.submitted_at : null;
+
+  if (action === 'submit_for_verification') {
+    status = 'pending_verification';
+    personnelTesting = req.user.name;
+    testedByUserId = req.user.id;
+    personnelVerifying = null;
+    verifiedByUserId = null;
+    submittedAt = null;
+  } else {
+    status = 'draft';
+  }
+
+  const derivedResultStatus = sampleAcceptability === 'rejected' ? 'rejected' : null;
 
   const { rows } = await pool.query(
     `insert into submissions
        (round_id, facility_id, date_received, method_used, sample_condition, received_by,
-        sample_acceptability, sample_rejection_reason,
-        result_status, result, personnel_testing, personnel_verifying, status, saved_at, submitted_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now(), $14)
+        sample_acceptability, sample_rejection_reason, result_status, result,
+        personnel_testing, personnel_verifying, tested_by_user_id, verified_by_user_id,
+        status, saved_at, submitted_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),$16)
      on conflict (round_id, facility_id) do update set
        date_received = excluded.date_received,
        method_used = excluded.method_used,
@@ -195,20 +264,24 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
        result = excluded.result,
        personnel_testing = excluded.personnel_testing,
        personnel_verifying = excluded.personnel_verifying,
+       tested_by_user_id = excluded.tested_by_user_id,
+       verified_by_user_id = excluded.verified_by_user_id,
        status = excluded.status,
        saved_at = now(),
        submitted_at = excluded.submitted_at
      returning *`,
-    [req.params.roundId, req.user.facilityId, dateReceived || null, methodUsed || null,
-     sampleCondition || null, receivedBy || null, sampleAcceptability || null, sampleRejectionReason || null,
-     derivedResultStatus, normalizedResult, personnelTesting || null, personnelVerifying || null,
-     status, submittedAt]
+    [
+      req.params.roundId, req.user.facilityId,
+      dateReceived || null, methodUsed || null, sampleCondition || null, receivedBy || null,
+      sampleAcceptability || null, sampleRejectionReason || null,
+      derivedResultStatus, normalizedResult,
+      personnelTesting, personnelVerifying, testedByUserId, verifiedByUserId,
+      status, submittedAt,
+    ]
   );
   res.json(camel(rows[0]));
 });
 
-// GET /api/rounds/mine/status — a Facility User's submission status (submitted / draft / none)
-// across every round, so Active Rounds can show "Results Submitted" / "Results Not Submitted".
 router.get('/mine/status', requireAuth, requireRole('user'), async (req, res) => {
   const { rows } = await pool.query(
     'select round_id, status from submissions where facility_id = $1',

@@ -600,12 +600,14 @@
           <input type="text" id="sharedMethodUsed" placeholder="e.g. Manual determination">
         </div>
 
-        <div id="samplePanelsWrap"></div>
+        <div class="note" id="dualControlNote">Dual control: the analyst who enters results uses <strong>Submit for verification</strong>. A <strong>different</strong> facility user must then log in and click <strong>Verify &amp; lock results</strong>. One account cannot do both steps.</div>
+      <div id="samplePanelsWrap"></div>
 
         <div class="card">
           <div class="btn-row">
             <button class="secondary" id="saveAllDraftBtn">Save all as draft</button>
-            <button class="primary" id="submitAllBtn">Submit all results</button>
+            <button class="primary" id="submitAllBtn">Submit for verification</button>
+            <button class="primary gold" id="verifyAllBtn" style="display:none;">Verify &amp; lock results</button>
           </div>
         </div>
       </div>
@@ -2214,9 +2216,12 @@ function wireBacterialGrowthDependencies(container){
 
 function renderSamplePanelHtml(pkg, sample, mine, expanded){
   const locked = mine && mine.status === 'submitted';
+  const pendingV = mine && mine.status === 'pending_verification';
   const rejected = mine ? mine.sampleAcceptability === 'rejected' : false;
   const statusBadge = locked
     ? { text:'Submitted', bg:'#e3f3ea', fg:'#0d3b30' }
+    : pendingV
+      ? { text:'Awaiting verification', bg:'#fff3c4', fg:'#7a5b00' }
     : rejected
       ? { text:'Rejected', bg:'#fde2e2', fg:'#8a1f1f' }
       : { text:'Incomplete', bg:'#fff3c4', fg:'#7a5b00' };
@@ -2241,11 +2246,20 @@ function renderSamplePanelHtml(pkg, sample, mine, expanded){
         <div class="p-dynamic-fields">${dynamicFieldsHtml(pkg.testId, mine?.result)}</div>
         <h4 class="fieldset-title">Personnel</h4>
         <div class="row2">
-          <div><label>Tested By *</label><input type="text" class="p-personnel-testing" value="${mine?.personnelTesting || ''}"></div>
-          <div><label>Results Authorized By *</label><input type="text" class="p-personnel-verifying" value="${mine?.personnelVerifying || ''}"></div>
+          <div>
+            <label>Analyst (tested by)</label>
+            <input type="text" class="p-personnel-testing" value="${mine?.personnelTesting || ''}" disabled>
+            <div class="meta" style="margin-top:4px;">Set automatically when results are sent for verification.</div>
+          </div>
+          <div>
+            <label>Verifier (authorized by)</label>
+            <input type="text" class="p-personnel-verifying" value="${mine?.personnelVerifying || ''}" disabled>
+            <div class="meta" style="margin-top:4px;">Must be a different user account at this facility.</div>
+          </div>
         </div>
       </div>
-      ${locked ? '<div class="meta" style="margin-top:8px; color:#0d3b30;">✓ Submitted — locked, can no longer be edited.</div>' : ''}
+      ${mine && mine.status==='pending_verification' ? `<div class="note" style="margin-top:10px;">Awaiting verification. Analyst: <strong>${mine.personnelTesting || '—'}</strong>. ${session && mine.testedByUserId && String(mine.testedByUserId)===String(session.userId||session.id) ? 'You entered these results — a colleague must log in to verify.' : 'If you did not enter these results, use Verify &amp; lock below.'}</div>` : ''}
+      ${locked ? '<div class="meta" style="margin-top:8px; color:#0d3b30;">✓ Verified &amp; submitted — locked.</div>' : ''}
     </div>
   </div>`;
 }
@@ -2259,6 +2273,7 @@ function updatePanelStatus(pkg, sample, container){
   if(!badge) return;
   const mine = MY_PACKAGE_SUBMISSIONS[sample.id];
   if(mine && mine.status==='submitted'){ badge.textContent='Submitted'; badge.style.background='#e3f3ea'; badge.style.color='#0d3b30'; return; }
+  if(mine && mine.status==='pending_verification'){ badge.textContent='Awaiting verification'; badge.style.background='#fff3c4'; badge.style.color='#7a5b00'; return; }
   if(container.querySelector('.p-rejected').checked){ badge.textContent='Rejected'; badge.style.background='#fde2e2'; badge.style.color='#8a1f1f'; return; }
   const missing = missingNotPerformedReasons(pkg.testId, container);
   const ready = missing.length===0;
@@ -2268,7 +2283,7 @@ function updatePanelStatus(pkg, sample, container){
 }
 function wireSamplePanel(pkg, sample, container){
   const mine = MY_PACKAGE_SUBMISSIONS[sample.id];
-  const locked = mine && mine.status === 'submitted';
+  const locked = mine && (mine.status === 'submitted' || mine.status === 'pending_verification');
   wireNotPerformedCheckboxes(container);
   if(pkg.testId === 'bacterialgrowth') wireBacterialGrowthDependencies(container);
   container.querySelector('.p-accepted').addEventListener('change', ()=>{ togglePanelRejection(container); updatePanelStatus(pkg, sample, container); });
@@ -2312,7 +2327,7 @@ async function renderSubmit(){
   document.getElementById('sharedReceivedBy').value = anyExisting?.receivedBy || '';
   document.getElementById('sharedSampleCondition').value = anyExisting?.sampleCondition || '';
   document.getElementById('sharedMethodUsed').value = anyExisting?.methodUsed || '';
-  const allLocked = pkg.samples.every(s=>MY_PACKAGE_SUBMISSIONS[s.id]?.status==='submitted');
+  const allLocked = pkg.samples.every(s=>{ const st=MY_PACKAGE_SUBMISSIONS[s.id]?.status; return st==='submitted'||st==='pending_verification'; });
   ['sharedDateReceived','sharedReceivedBy','sharedSampleCondition','sharedMethodUsed'].forEach(id=>{
     document.getElementById(id).disabled = allLocked;
   });
@@ -2332,10 +2347,20 @@ async function renderSubmit(){
   });
 
   const closed = c.status === 'closed';
-  document.getElementById('saveAllDraftBtn').disabled = closed;
-  document.getElementById('submitAllBtn').disabled = closed;
-  document.getElementById('saveAllDraftBtn').onclick = ()=>saveAllSamples(pkg, false);
-  document.getElementById('submitAllBtn').onclick = ()=>saveAllSamples(pkg, true);
+  const anyPending = pkg.samples.some(s=>MY_PACKAGE_SUBMISSIONS[s.id]?.status==='pending_verification');
+  const anyDraftable = pkg.samples.some(s=>{
+    const st = MY_PACKAGE_SUBMISSIONS[s.id]?.status;
+    return !st || st==='draft';
+  });
+  document.getElementById('saveAllDraftBtn').disabled = closed || !anyDraftable;
+  document.getElementById('submitAllBtn').disabled = closed || !anyDraftable;
+  document.getElementById('submitAllBtn').textContent = 'Submit for verification';
+  const verifyBtn = document.getElementById('verifyAllBtn');
+  verifyBtn.style.display = anyPending ? '' : 'none';
+  verifyBtn.disabled = closed || !anyPending;
+  document.getElementById('saveAllDraftBtn').onclick = ()=>saveAllSamples(pkg, 'draft');
+  document.getElementById('submitAllBtn').onclick = ()=>saveAllSamples(pkg, 'submit_for_verification');
+  verifyBtn.onclick = ()=>saveAllSamples(pkg, 'verify');
 }
 
 // Collects and (when finalizing) validates one sample's panel. Sample Condition (date/received
@@ -2365,7 +2390,7 @@ function collectSamplePayload(pkg, sample, container, finalize){
     if(!sampleAcceptability) errors.push(`Sample ${sample.sampleId}: indicate accepted or rejected.`);
     if(sampleAcceptability==='rejected' && !(sampleRejectionReason||'').trim()) errors.push(`Sample ${sample.sampleId}: reason for rejection is required.`);
     if(sampleAcceptability === 'accepted'){
-      if(!personnelTesting || !personnelVerifying) errors.push(`Sample ${sample.sampleId}: Tested By and Results Authorized By names are required.`);
+      // Analyst/verifier names are set from login accounts (dual control) — not typed here.
       const missingReasons = missingNotPerformedReasons(pkg.testId, container);
       if(missingReasons.length) errors.push(`Sample ${sample.sampleId}: select a reason for "Test Not Performed" — ${missingReasons.join(', ')}.`);
       const testDef = testById(pkg.testId);
@@ -2404,51 +2429,66 @@ function collectSamplePayload(pkg, sample, container, finalize){
 // sample in the package is validated and saved together (sharing the one Sample Condition
 // entry); already-submitted samples are skipped (never re-sent). Saving one sample's PUT call
 // never touches another's row.
-async function saveAllSamples(pkg, finalize){
+async function saveAllSamples(pkg, action){
+  // action: 'draft' | 'submit_for_verification' | 'verify'
   const panelsWrap = document.getElementById('samplePanelsWrap');
   const allErrors = [];
   const toSubmit = [];
   pkg.samples.forEach(sample=>{
     const mine = MY_PACKAGE_SUBMISSIONS[sample.id];
-    if(mine && mine.status==='submitted') return;
+    if(action === 'verify'){
+      if(!mine || mine.status !== 'pending_verification') return;
+    } else {
+      if(mine && (mine.status==='submitted' || mine.status==='pending_verification')) return;
+    }
     const container = panelsWrap.querySelector(`.sample-panel-body[data-round="${sample.id}"]`);
     if(!container) return;
+    if(action === 'verify'){
+      toSubmit.push({ sample, payload: { action: 'verify' } });
+      return;
+    }
+    const finalize = action === 'submit_for_verification';
     const { errors, payload } = collectSamplePayload(pkg, sample, container, finalize);
+    payload.action = action;
     allErrors.push(...errors);
     toSubmit.push({ sample, payload });
   });
 
-  if(finalize && allErrors.length){
+  if(action === 'submit_for_verification' && allErrors.length){
     showToast(allErrors[0] + (allErrors.length>1 ? ` (+${allErrors.length-1} more issue(s) — check every sample)` : ''));
     return;
   }
   if(toSubmit.length === 0){
-    showToast('Nothing to save — every sample in this round is already submitted.');
+    showToast(action === 'verify' ? 'No samples awaiting your verification.' : 'Nothing to save — every sample is already submitted or awaiting verification.');
     return;
   }
-  if(finalize && !confirm(`Submit final results for ${toSubmit.length} sample(s) in ${pkg.label}? This locks each one and cannot be undone.`)) return;
+  if(action === 'submit_for_verification' && !confirm(`Submit ${toSubmit.length} sample(s) in ${pkg.label} for verification?\n\nA different user at your facility must log in and verify before results are locked.`)) return;
+  if(action === 'verify' && !confirm(`Verify and lock ${toSubmit.length} sample(s)?\n\nYou must not be the same person who entered the results. This cannot be undone.`)) return;
 
   let successCount = 0;
   const failMessages = [];
-  for(const {sample, payload} of toSubmit){
+  for(const { sample, payload } of toSubmit){
     try{
-      const saved = await api(`/rounds/${sample.id}/submissions/mine`, { method:'PUT', body: payload });
-      MY_PACKAGE_SUBMISSIONS[sample.id] = saved;
-      MY_SUBMISSION_STATUS[sample.id] = saved.status;
+      const body = action === 'verify' ? { action: 'verify' } : payload;
+      const updated = await api(`/rounds/${sample.id}/submissions/mine`, { method:'PUT', body });
+      MY_PACKAGE_SUBMISSIONS[sample.id] = updated;
+      successCount++;
     }catch(e){
       failMessages.push(`Sample ${sample.sampleId}: ${e.message}`);
-      continue;
     }
-    successCount++;
   }
-
   if(failMessages.length){
     showToast(`${successCount} saved. ${failMessages.length} failed — ${failMessages[0]}`);
+  }else if(action === 'verify'){
+    showToast(`${successCount} sample(s) verified and locked.`);
+  }else if(action === 'submit_for_verification'){
+    showToast(`${successCount} sample(s) submitted for verification.`);
   }else{
-    showToast(finalize ? `${successCount} sample result(s) submitted.` : `${successCount} sample(s) saved as draft.`);
+    showToast(`${successCount} sample(s) saved as draft.`);
   }
   renderSubmit();
 }
+
 
 /* ---------------- USER: My Feedback ---------------- */
 async function renderMyFeedback(){
