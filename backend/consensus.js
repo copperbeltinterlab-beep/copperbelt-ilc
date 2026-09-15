@@ -1,10 +1,10 @@
 const { getTestDef } = require('./testDefinitions');
 
 const MIN_PARTICIPANTS = 3; // minimum facilities needed for a statistically meaningful consensus
-const SDI_LIMIT = 2; // |SDI| <= 2 is Acceptable, matching common EQA practice
+const SDI_LIMIT = 2; // |SDI| <= 2 is Acceptable against the cleaned mean/SD
+const OUTLIER_Z_LIMIT = 3; // | (x − median) / (1.483×MAD) | > 3 → exclude from consensus
+const MIN_AFTER_EXCLUSION = 2; // need at least this many values after exclusion
 
-// Reads a field's value tolerantly — supports the { value, notPerformed } shape and
-// older flat values from before the per-analyte redesign.
 function readField(result, key) {
   const v = result ? result[key] : undefined;
   if (v && typeof v === 'object' && ('value' in v || 'notPerformed' in v)) {
@@ -39,54 +39,101 @@ function medianOf(sorted) {
   return (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-/**
- * ISO 13528 Algorithm A (robust mean and robust SD).
- * One extreme laboratory value is down-weighted so it cannot dominate the consensus.
- * Returns { mean, sd } (robust estimates; property names kept for existing callers).
- */
-function robustAlgorithmA(values) {
+function classicalMeanSd(values) {
   const n = values.length;
   if (n === 0) return { mean: null, sd: null };
+  const mean = values.reduce((s, v) => s + v, 0) / n;
+  if (n === 1) return { mean, sd: 0 };
+  const variance = values.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / (n - 1);
+  return { mean, sd: Math.sqrt(variance) };
+}
+
+/**
+ * Exclude gross outliers using a robust scale, then classical mean/SD on the rest.
+ *
+ * Why not classical SDI for exclusion?
+ * With few labs, one wild value inflates SD so much that its own |SDI| stays < 3
+ * and is never removed — producing wide / negative “acceptable” bands.
+ *
+ * Detection (robust): median + MAD×1.483. Drop |z| > OUTLIER_Z_LIMIT.
+ * Consensus (classical): mean and sample SD of remaining values only.
+ * Scoring: every lab (including excluded) is scored with SDI vs cleaned mean/SD,
+ * acceptable if |SDI| ≤ SDI_LIMIT (2).
+ */
+function meanSdAfterOutlierExclusion(values) {
+  const n = values.length;
+  if (n === 0) {
+    return {
+      mean: null, sd: null, nUsed: 0, nExcluded: 0, excludedValues: [],
+    };
+  }
 
   const sorted = values.slice().sort((a, b) => a - b);
-  let xStar = medianOf(sorted);
+  const med = medianOf(sorted);
+  const absDev = values.map(v => Math.abs(v - med)).sort((a, b) => a - b);
+  let madScale = 1.483 * medianOf(absDev);
 
-  // Initial scale: MAD * 1.483 (consistent for normal data); floor avoids zero SD
-  const absDev = values.map(v => Math.abs(v - xStar)).sort((a, b) => a - b);
-  let sStar = 1.483 * medianOf(absDev);
-  if (!sStar || sStar < 1e-12) {
-    // All values essentially equal — use classical SD or a tiny epsilon
-    const classicalMean = values.reduce((s, v) => s + v, 0) / n;
-    const classicalVar = n > 1
-      ? values.reduce((s, v) => s + Math.pow(v - classicalMean, 2), 0) / (n - 1)
-      : 0;
-    sStar = Math.sqrt(classicalVar);
-    if (sStar < 1e-12) sStar = 0;
-    return { mean: xStar, sd: sStar };
+  let kept = values.slice();
+  let excludedValues = [];
+
+  if (n >= MIN_PARTICIPANTS) {
+    if (!madScale || madScale < 1e-12) {
+      // All values essentially identical — nothing to exclude
+      madScale = 0;
+    } else {
+      const candidates = [];
+      const outliers = [];
+      values.forEach(v => {
+        const z = Math.abs((v - med) / madScale);
+        if (z > OUTLIER_Z_LIMIT) outliers.push(v);
+        else candidates.push(v);
+      });
+      if (outliers.length > 0 && candidates.length >= MIN_AFTER_EXCLUSION) {
+        kept = candidates;
+        excludedValues = outliers;
+      }
+    }
   }
 
-  // Iterate until robust mean/SD stabilise (ISO 13528 Algorithm A)
-  const maxIter = 50;
-  for (let iter = 0; iter < maxIter; iter++) {
-    const delta = 1.5 * sStar;
-    const winsorized = values.map(v => {
-      if (v < xStar - delta) return xStar - delta;
-      if (v > xStar + delta) return xStar + delta;
-      return v;
-    });
-    const newMean = winsorized.reduce((s, v) => s + v, 0) / n;
-    const sumSq = winsorized.reduce((s, v) => s + Math.pow(v - newMean, 2), 0);
-    // ISO 13528 uses 1.134 as the consistency factor for the winsorized SD estimator
-    const newSd = n > 1 ? 1.134 * Math.sqrt(sumSq / (n - 1)) : 0;
-
-    const meanDiff = Math.abs(newMean - xStar);
-    const sdDiff = Math.abs(newSd - sStar);
-    xStar = newMean;
-    sStar = newSd;
-    if (meanDiff < 1e-9 * (1 + Math.abs(xStar)) && sdDiff < 1e-9 * (1 + sStar)) break;
+  // Small-n safety: Dixon-style gap test when MAD fails to flag but one point is isolated
+  // (e.g. 28, 30, 95 with tiny MAD between 28 and 30 making 95 extreme).
+  if (excludedValues.length === 0 && n === 3) {
+    const s = sorted;
+    const range = s[2] - s[0];
+    if (range > 1e-12) {
+      const qLow = (s[1] - s[0]) / range;
+      const qHigh = (s[2] - s[1]) / range;
+      // Critical Q for n=3 at ~95% is ≈ 0.941
+      if (qHigh >= 0.941 && qHigh >= qLow) {
+        excludedValues = [s[2]];
+        kept = values.filter(v => v !== s[2]);
+        // if duplicate of s[2] exists, only remove one extreme instance via index
+        if (kept.length < MIN_AFTER_EXCLUSION) {
+          kept = [s[0], s[1]];
+          excludedValues = [s[2]];
+        }
+      } else if (qLow >= 0.941 && qLow > qHigh) {
+        kept = [s[1], s[2]];
+        excludedValues = [s[0]];
+      }
+    }
   }
 
-  return { mean: xStar, sd: sStar };
+  if (kept.length < MIN_AFTER_EXCLUSION) {
+    kept = values.slice();
+    excludedValues = [];
+  }
+
+  const final = classicalMeanSd(kept);
+  return {
+    mean: final.mean,
+    sd: final.sd,
+    nUsed: kept.length,
+    nExcluded: excludedValues.length,
+    excludedValues,
+    detectionMedian: med,
+    detectionScale: madScale,
+  };
 }
 
 function computeQuantitativeField(entries) {
@@ -97,27 +144,24 @@ function computeQuantitativeField(entries) {
       insufficientData: true,
       mean: null,
       sd: null,
-      method: 'robust_algorithm_a',
+      method: 'outlier_exclusion_mean_sd',
+      nUsed: 0,
+      nExcluded: 0,
     };
   }
-  const values = entries.map(e => e.value);
-  const { mean, sd } = robustAlgorithmA(values);
 
-  // Also expose classical mean/SD for transparency in admin reports (not used for scoring)
-  const classicalMean = values.reduce((s, v) => s + v, 0) / n;
-  const classicalVar = n > 1
-    ? values.reduce((s, v) => s + Math.pow(v - classicalMean, 2), 0) / (n - 1)
-    : 0;
-  const classicalSd = Math.sqrt(classicalVar);
+  const values = entries.map(e => e.value);
+  const result = meanSdAfterOutlierExclusion(values);
 
   return {
     n,
     insufficientData: false,
-    mean, // robust consensus location (Algorithm A)
-    sd,   // robust consensus scale (Algorithm A)
-    method: 'robust_algorithm_a',
-    classicalMean,
-    classicalSd,
+    mean: result.mean,
+    sd: result.sd,
+    method: 'outlier_exclusion_mean_sd',
+    nUsed: result.nUsed,
+    nExcluded: result.nExcluded,
+    excludedValues: result.excludedValues,
   };
 }
 
@@ -141,7 +185,6 @@ function evaluateQuantitative(value, notPerformed, fieldStats) {
   const mean = fieldStats.mean;
   const sd = fieldStats.sd;
   if (sd === 0 || sd === null || sd === undefined) {
-    // All participants identical (or zero robust scale): exact match only
     const match = Math.abs(num - mean) < 1e-9;
     return { status: match ? 'acceptable' : 'unacceptable', sdi: match ? 0 : Infinity };
   }
@@ -160,7 +203,6 @@ function overallStatus(fieldEvals) {
   return 'not_evaluated';
 }
 
-// Optional human labels for comment lines (keys only if no richer label map is available)
 function fieldLabel(testId, key) {
   return key;
 }
@@ -169,7 +211,6 @@ function buildConsensusReport(testId, submissions) {
   const def = getTestDef(testId);
   if (!def) return { error: `Unknown test: ${testId}` };
 
-  // Only non-rejected submissions with results contribute to consensus
   const reportable = submissions.filter(s => s.sampleAcceptability !== 'rejected');
 
   const fieldStats = {};
@@ -218,9 +259,11 @@ function buildConsensusReport(testId, submissions) {
         const sdiText = evalResult.sdi === undefined || evalResult.sdi === null
           ? ''
           : ` (SDI ${evalResult.sdi === Infinity ? '∞' : evalResult.sdi.toFixed(2)})`;
-        const meanText = stats.insufficientData
-          ? 'insufficient data'
-          : `robust mean ${Number(stats.mean).toFixed(2)} ± ${Number(stats.sd).toFixed(2)} (Alg. A, n=${stats.n})`;
+        let meanText = 'insufficient data';
+        if (!stats.insufficientData) {
+          const excl = stats.nExcluded > 0 ? `, ${stats.nExcluded} outlier(s) excluded from mean` : '';
+          meanText = `mean ${Number(stats.mean).toFixed(2)} ± ${Number(stats.sd).toFixed(2)} (n=${stats.nUsed}${excl})`;
+        }
         commentLines.push(`${label}: ${value} — ${meanText}${sdiText} → ${evalResult.status}`);
       } else {
         const consensusText = stats.insufficientData
@@ -246,8 +289,9 @@ function buildConsensusReport(testId, submissions) {
 module.exports = {
   buildConsensusReport,
   readField,
-  robustAlgorithmA,
+  meanSdAfterOutlierExclusion,
   computeQuantitativeField,
   SDI_LIMIT,
+  OUTLIER_Z_LIMIT,
   MIN_PARTICIPANTS,
 };
