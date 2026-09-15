@@ -2721,34 +2721,63 @@ function qualitativeFieldTable(field, items){
       <tbody>${rowsHtml}</tbody>
     </table>`;
 }
-// Quantitative tests keep the existing Mean/SD/SDI table design (untouched), just repeated
-// once per sample (sorted lowest-to-highest) within the same combined package report.
-function quantitativeSampleSection(round, sub, testDef){
-  const fb = sub.feedback || {};
-  const hasFieldData = !!(fb.fields && fb.fieldStats);
-  const rowsHtml = testDef.fields.map(a=>{
-    const fs = fieldState(sub.result, a.key);
-    const resultText = fs.notPerformed ? 'Not Performed' : (fs.value!=null && fs.value!=='' ? `${fs.value}${a.unit?' '+a.unit:''}` : '—');
-    let mean='—', sd='—', range='—', sdi='—', grade='Pending', n='—';
-    if(hasFieldData){
-      const stat = fb.fieldStats[a.key] || {};
-      const fEval = fb.fields[a.key] || {};
-      if(stat && !stat.insufficientData && typeof stat.mean==='number'){
-        mean = round2(stat.mean); sd = round2(stat.sd);
-        range = `${round2(stat.mean - 2*stat.sd)} – ${round2(stat.mean + 2*stat.sd)}`;
+// Quantitative tests: one table per analyte, one row per sample (same layout idea as
+// qualitative reports — HB then all samples, ALT then all samples, etc.).
+function quantitativeFieldTable(field, items){
+  const rowsHtml = items.map(({round, sub})=>{
+    const fb = sub.feedback || {};
+    const fs = fieldState(sub.result, field.key);
+    const resultText = fs.notPerformed ? 'Test Not Performed' : (fs.value !== null && fs.value !== undefined && fs.value !== '' ? fs.value : '—');
+    let grade = '—', n = '—', mean = '—', sd = '—', sdi = '—', range = '—';
+    let status = 'pending';
+    if(fb.fieldStats && fb.fields){
+      const stat = fb.fieldStats[field.key] || {};
+      const fEval = fb.fields[field.key] || {};
+      status = fEval.status || 'not_evaluated';
+      grade = gradeLabel(status);
+      if(stat.insufficientData){
+        mean = 'Insuff.';
+        sd = '—';
+        range = 'Insufficient data';
+        n = (typeof stat.n === 'number') ? stat.n : '—';
+      } else {
+        n = (typeof stat.nUsed === 'number') ? stat.nUsed : (typeof stat.n === 'number' ? stat.n : '—');
+        mean = (typeof stat.mean === 'number') ? round2(stat.mean) : '—';
+        sd = (typeof stat.sd === 'number') ? round2(stat.sd) : '—';
+        if(typeof fEval.sdi === 'number'){
+          sdi = fEval.sdi === Infinity ? '∞' : round2(fEval.sdi);
+        }
+        if(typeof stat.mean === 'number' && typeof stat.sd === 'number'){
+          range = `${round2(stat.mean - 2*stat.sd)} – ${round2(stat.mean + 2*stat.sd)}`;
+        }
       }
-      if(fEval && typeof fEval.sdi==='number'){ sdi = fEval.sdi===Infinity ? '∞' : fEval.sdi.toFixed(2); }
-      grade = gradeLabel(fEval.status);
-      n = (stat && typeof stat.n==='number') ? stat.n : '—';
     }
-    return `<tr><td>${a.label}</td><td>${resultText}</td><td>${grade}</td><td>${n}</td><td>${mean}</td><td>${sd}</td><td>${sdi}</td><td>${range}</td><td>Peer Group Mean ± 2 SD</td></tr>`;
+    return `<tr>
+      <td>Sample ${round.sampleId}</td>
+      <td>${resultText}</td>
+      <td>${grade}</td>
+      <td>${n}</td>
+      <td>${mean}</td>
+      <td>${sd}</td>
+      <td>${sdi}</td>
+      <td>${range}</td>
+      ${acceptabilityCell(status)}
+    </tr>`;
   }).join('');
-  return `<div class="fieldset-title" style="margin:14px 0 4px; font-size:10pt;">Sample ${round.sampleId}</div>
+  return `<div class="fieldset-title" style="margin:14px 0 4px; font-size:10pt;">${field.label}${field.unit ? ` (${field.unit})` : ''}</div>
     <table class="pr-table">
-      <thead><tr><th>Analyte</th><th>Result</th><th>Grade</th><th>Peer Group N</th><th>Mean</th><th>SD</th><th>SDI</th><th>Acceptable Range</th><th>Evaluation Criteria</th></tr></thead>
+      <colgroup>
+        <col style="width:12%;"><col style="width:11%;"><col style="width:9%;"><col style="width:8%;">
+        <col style="width:10%;"><col style="width:10%;"><col style="width:9%;"><col style="width:16%;"><col style="width:15%;">
+      </colgroup>
+      <thead><tr>
+        <th>Sample</th><th>Your Result</th><th>Grade</th><th>N</th>
+        <th>Mean</th><th>SD</th><th>SDI</th><th>Acceptable Range</th><th>Acceptability</th>
+      </tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>`;
 }
+
 // Builds the report HTML (shared by both the Print action and the PDF download action, so
 // they can never drift apart into two different-looking reports).
 function buildFeedbackReportHtml(pkg, itemsUnsorted){
@@ -2762,7 +2791,7 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
   const coatOfArmsSrc = (document.getElementById('headerCoatOfArms') || {}).src || '';
 
   const resultsHtml = quant
-    ? items.map(({round,sub})=>quantitativeSampleSection(round, sub, testDef)).join('')
+    ? testDef.fields.map(f=>quantitativeFieldTable(f, items)).join('')
     : testDef.fields.map(f=>qualitativeFieldTable(f, items)).join('');
 
   // Sample Condition is now one shared entry for the whole round (every sample carries the
