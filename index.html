@@ -654,6 +654,18 @@
       <h2 class="section">My feedback</h2>
       <div id="myFeedbackList"></div>
     </section>
+    <section class="tab-panel" id="tab-notifications">
+      <h2 class="section">Notifications</h2>
+      <p class="note">Queries your laboratory sent about sample results, and responses from the providing facility. When a response is posted, it appears here for everyone at your facility.</p>
+      <div class="btn-row" style="margin:0 0 12px; gap:8px; flex-wrap:wrap;">
+        <button type="button" class="secondary small notif-filter active" data-filter="all">All</button>
+        <button type="button" class="secondary small notif-filter" data-filter="awaiting">Awaiting response</button>
+        <button type="button" class="secondary small notif-filter" data-filter="responded">Responded</button>
+        <button type="button" class="secondary small notif-filter" data-filter="new">New responses</button>
+      </div>
+      <div id="notificationsList"></div>
+    </section>
+
 
   </main>
 </div>
@@ -972,7 +984,7 @@ async function tryRestoreSession(){
 const NAV_BY_ROLE = {
   superadmin: [ ['facilities','Facilities'], ['access','Users & Access'], ['allrounds','All ILC Rounds'] ],
   facilityadmin: [ ['facusers','My Facility Users'], ['provide','Tests We Provide'], ['feedback-admin','Give Feedback'], ['queries','Queries'] ],
-  user: [ ['rounds','Active Rounds'], ['submit','Submit Result'], ['myfeedback','My Feedback'] ],
+  user: [ ['rounds','Active Rounds'], ['submit','Submit Result'], ['myfeedback','My Feedback'], ['notifications','Notifications'] ],
 };
 
 function enterApp(){
@@ -1011,6 +1023,7 @@ async function loadAllData(){
   }
   renderCurrentTab();
   if(session.role === 'facilityadmin') updateQueriesBadge();
+  if(session.role === 'user') updateNotificationsBadge();
 }
 
 function setActiveTab(tab){
@@ -1031,6 +1044,7 @@ function renderCurrentTab(){
   if(tab==='provide') renderProvide();
   if(tab==='feedback-admin') renderFeedbackAdmin();
   if(tab==='queries') renderQueriesInbox();
+  if(tab==='notifications') renderNotifications();
   if(tab==='oversight') renderOversight();
   if(tab==='rounds') renderRounds();
   if(tab==='submit') renderSubmit();
@@ -2221,6 +2235,106 @@ async function updateQueriesBadge(){
     const btn = document.querySelector('.nav-btn[data-tab="queries"]');
     if(!btn) return;
     btn.textContent = n > 0 ? `Queries (${n})` : 'Queries';
+  }catch(e){ /* ignore */ }
+}
+
+
+let notificationsFilter = 'all';
+
+function getSeenQueryResponses(){
+  try{ return JSON.parse(localStorage.getItem('ilc_seen_query_responses') || '[]'); }
+  catch(e){ return []; }
+}
+function markQueryResponseSeen(id){
+  const seen = getSeenQueryResponses();
+  if(!seen.includes(Number(id))){
+    seen.push(Number(id));
+    localStorage.setItem('ilc_seen_query_responses', JSON.stringify(seen));
+  }
+}
+
+async function renderNotifications(){
+  const el = document.getElementById('notificationsList');
+  if(!el) return;
+  document.querySelectorAll('.notif-filter').forEach(b=>{
+    b.classList.toggle('active', b.dataset.filter === notificationsFilter);
+  });
+  try{
+    const items = await api('/rounds/queries/sent');
+    const seen = getSeenQueryResponses();
+    let list = items.slice();
+    if(notificationsFilter === 'awaiting') list = list.filter(q=>!q.hasResponse);
+    else if(notificationsFilter === 'responded') list = list.filter(q=>q.hasResponse);
+    else if(notificationsFilter === 'new') list = list.filter(q=>q.hasResponse && !seen.includes(Number(q.id)));
+
+    if(!list.length){
+      el.innerHTML = '<div class="empty">No notifications in this view.</div>';
+      updateNotificationsBadge();
+      return;
+    }
+    el.innerHTML = list.map(q=>{
+      const when = q.createdAt ? new Date(q.createdAt).toLocaleString() : '—';
+      const testName = testById(q.testId) ? testById(q.testId).name : (q.testId || '—');
+      const isNew = q.hasResponse && !seen.includes(Number(q.id));
+      const statusBadge = q.hasResponse
+        ? (isNew
+            ? '<span class="badge" style="background:#fbead2;color:#7a5b00;">New response</span>'
+            : '<span class="badge" style="background:#dff0e7;color:#2f7a5e;">Responded</span>')
+        : '<span class="badge" style="background:#f7dedc;color:#b8433b;">Awaiting response</span>';
+      const responseHtml = q.hasResponse
+        ? `<div style="margin-top:10px; padding:10px; background:#eef6f2; border-radius:8px; border:1px solid #c9d6d1;">
+             <div class="meta" style="margin-bottom:4px;"><strong>Response from ${q.providerFacilityName || 'providing facility'}</strong>
+               ${q.respondedAt ? ' · ' + new Date(q.respondedAt).toLocaleString() : ''}
+               ${q.respondedByName ? ' · ' + q.respondedByName : ''}
+             </div>
+             <div style="white-space:pre-wrap; font-size:13px;">${escapeHtml(q.responseMessage)}</div>
+           </div>`
+        : `<div class="meta" style="margin-top:8px;">No response yet from the providing facility.</div>`;
+      return `<div class="card" style="${isNew ? 'border-color:#c08a2e;' : ''}">
+        <div class="row-item" style="border:none; padding:0; flex-wrap:wrap; gap:8px;">
+          <div>
+            <strong>${testName} · Sample ${q.sampleId || '—'}</strong>
+            ${statusBadge}
+            <div class="meta">Sent ${when}${q.fromUserName ? ' by ' + q.fromUserName : ''}</div>
+            <div class="meta">To: ${q.providerFacilityName || 'providing facility'}</div>
+          </div>
+          ${isNew ? `<button class="secondary small mark-notif-seen" data-id="${q.id}">Mark seen</button>` : ''}
+        </div>
+        <div style="margin-top:8px; white-space:pre-wrap; font-size:13.5px;"><strong>Your query:</strong><br>${escapeHtml(q.message)}</div>
+        ${responseHtml}
+      </div>`;
+    }).join('');
+
+    el.querySelectorAll('.mark-notif-seen').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        markQueryResponseSeen(btn.dataset.id);
+        renderNotifications();
+        updateNotificationsBadge();
+      });
+    });
+    // Auto-mark seen when viewing responded items in "new" filter after open - optional: mark all visible new as seen on view
+    updateNotificationsBadge();
+  }catch(e){
+    el.innerHTML = `<div class="empty">${e.message}</div>`;
+  }
+}
+
+document.querySelectorAll('.notif-filter').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    notificationsFilter = btn.dataset.filter;
+    renderNotifications();
+  });
+});
+
+async function updateNotificationsBadge(){
+  if(!session || session.role !== 'user') return;
+  try{
+    const items = await api('/rounds/queries/sent');
+    const seen = getSeenQueryResponses();
+    const n = items.filter(q=>q.hasResponse && !seen.includes(Number(q.id))).length;
+    const btn = document.querySelector('.nav-btn[data-tab="notifications"]');
+    if(!btn) return;
+    btn.textContent = n > 0 ? `Notifications (${n})` : 'Notifications';
   }catch(e){ /* ignore */ }
 }
 
