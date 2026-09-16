@@ -332,8 +332,31 @@
     <p><a href="mailto:copperbeltinterlab@gmail.com">copperbeltinterlab@gmail.com</a></p>
   </div>
 
-  <div class="cta-wrap">
+  <div class="cta-wrap" style="display:flex; gap:12px; flex-wrap:wrap; justify-content:center;">
+    <button id="homeSubscribeCta" class="home-cta" style="background:#AD8A4D; color:#123B39;">Subscribe your laboratory</button>
     <button id="homeLoginCta" class="home-cta">Log in to the Programme</button>
+  </div>
+
+  <div class="card" id="subscribeCard" style="display:none; max-width:480px; margin:20px auto 0;">
+    <h3 class="subsection" style="margin-top:0;">Register your laboratory</h3>
+    <p class="note">Submit your laboratory details for review. A Super Admin will approve the registration before it appears on the programme list. This does not create a login by itself.</p>
+    <label>Facility name *</label>
+    <input type="text" id="subscribeName" placeholder="e.g. Kitwe Teaching Hospital Laboratory">
+    <label>City / town</label>
+    <input type="text" id="subscribeTown" placeholder="e.g. Kitwe">
+    <label>Type *</label>
+    <select id="subscribeType">
+      <option value="government">Government</option>
+      <option value="private">Private</option>
+    </select>
+    <label>Laboratory email *</label>
+    <input type="email" id="subscribeEmail" placeholder="lab@example.com">
+    <label>Contact person (optional)</label>
+    <input type="text" id="subscribeContact" placeholder="Name of laboratory contact">
+    <div class="btn-row">
+      <button type="button" class="primary" id="subscribeSubmitBtn">Submit registration</button>
+      <button type="button" class="secondary" id="subscribeCancelBtn">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -427,7 +450,10 @@
             <button type="button" class="secondary small facility-filter" data-filter="government">Government</button>
             <button type="button" class="secondary small facility-filter" data-filter="private">Private</button>
           </div>
-          <div id="facilitiesList"></div>
+          <h3 class="subsection">Pending laboratory registrations</h3>
+      <div id="pendingRegistrationsList" class="card" style="margin-bottom:16px;"><div class="empty">Loading…</div></div>
+      <h3 class="subsection">Registered facilities</h3>
+      <div id="facilitiesList"></div>
         </div>
       </div>
     </section>
@@ -1007,7 +1033,56 @@ function refreshCountdownsIfVisible(){
 
 /* ---------------- SUPER ADMIN: Facilities ---------------- */
 let facilityListFilter = 'all'; // all | government | private
+async function loadPendingRegistrations(){
+  const el = document.getElementById('pendingRegistrationsList');
+  if(!el) return;
+  try{
+    const list = await api('/facilities/registrations?status=pending');
+    if(!list.length){
+      el.innerHTML = '<div class="empty">No pending registrations.</div>';
+      return;
+    }
+    el.innerHTML = list.map(r=>`
+      <div class="row-item" style="flex-wrap:wrap; gap:8px;">
+        <div>
+          <strong>${r.name}</strong>
+          <div class="meta">${r.town || '—'} · ${r.facilityType === 'private' ? 'Private' : 'Government'} · ${r.labEmail}${r.contactName ? ' · ' + r.contactName : ''}</div>
+          <div class="meta">Submitted ${r.createdAt ? new Date(r.createdAt).toLocaleString() : '—'}</div>
+        </div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          <button class="primary small approve-reg" data-id="${r.id}">Approve</button>
+          <button class="secondary small reject-reg" data-id="${r.id}">Reject</button>
+        </div>
+      </div>`).join('');
+    el.querySelectorAll('.approve-reg').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        if(!confirm('Approve this laboratory and add it to the facilities list?')) return;
+        try{
+          const res = await api(`/facilities/registrations/${btn.dataset.id}/approve`, { method:'POST' });
+          showToast(res.message || 'Approved.');
+          FACILITIES = await api('/facilities');
+          renderFacilities();
+        }catch(e){ showToast(e.message); }
+      });
+    });
+    el.querySelectorAll('.reject-reg').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const reason = prompt('Optional reason for rejection:');
+        if(reason === null) return;
+        try{
+          await api(`/facilities/registrations/${btn.dataset.id}/reject`, { method:'POST', body:{ reason } });
+          showToast('Registration rejected.');
+          loadPendingRegistrations();
+        }catch(e){ showToast(e.message); }
+      });
+    });
+  }catch(e){
+    el.innerHTML = `<div class="empty">${e.message}</div>`;
+  }
+}
 function renderFacilities(){
+  loadPendingRegistrations();
+
   const el = document.getElementById('facilitiesList');
   document.querySelectorAll('.facility-filter').forEach(b=>{
     b.classList.toggle('active', b.dataset.filter === facilityListFilter);
@@ -1163,7 +1238,7 @@ function renderAccess(){
         <button class="secondary small edit-details-admin" data-id="${u.id}">Edit details</button>
         ${(u.status==='pending_activation'||u.status==='activation_expired') ? `<button class="secondary small resend-activation" data-id="${u.id}">Resend activation</button><button class="secondary small enable-bypass" data-id="${u.id}">Enable via bypass</button>` : ''}
         ${u.status==='bypass_pending' ? '' : `<button class="secondary small toggle-active" data-id="${u.id}">${u.active===false ? 'Enable' : 'Disable'}</button>`}
-        ${u.id===session.userId ? '' : `<button class="secondary small delete-user" data-id="${u.id}">Delete</button>`}
+        ${u.id===session.userId ? '' : `<button class="secondary small admin-reset-pw" data-id="${u.id}">Set new password</button><button class="secondary small delete-user" data-id="${u.id}">Delete</button>`}
       </div>
     </div>`).join('');
 
@@ -1241,6 +1316,24 @@ function renderAccess(){
         const updated = await api(`/users/${btn.dataset.id}/enable-bypass`, { method:'POST' });
         Object.assign(u, updated);
         showToast('User enabled via bypass.');
+        renderAccess();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+  el.querySelectorAll('.admin-reset-pw').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const u = USERS.find(x=>x.id===Number(btn.dataset.id));
+      if(!u) return;
+      if(!confirm(`Set a new password for ${u.name} (${u.username})?\n\nUse only in special circumstances (e.g. forgotten password when email reset is unavailable). You must share the new password with them securely offline.`)) return;
+      const password = prompt('Enter a temporary password (min 8 characters):');
+      if(!password) return;
+      if(password.length < 8){ showToast('Password must be at least 8 characters.'); return; }
+      const confirmPw = prompt('Confirm the temporary password:');
+      if(confirmPw !== password){ showToast('Passwords do not match.'); return; }
+      try{
+        const res = await api(`/users/${u.id}/admin-set-password`, { method:'POST', body:{ password } });
+        if(res.user) Object.assign(u, res.user);
+        showToast(res.message || 'Password updated.');
         renderAccess();
       }catch(e){ showToast(e.message); }
     });
@@ -3138,6 +3231,39 @@ document.getElementById('changePwBtn').addEventListener('click', async ()=>{
 });
 
 document.getElementById('homeLoginCta').addEventListener('click', ()=>showPublicTab('login'));
+
+document.getElementById('homeSubscribeCta').addEventListener('click', ()=>{
+  const card = document.getElementById('subscribeCard');
+  card.style.display = card.style.display === 'none' ? 'block' : 'none';
+});
+document.getElementById('subscribeCancelBtn').addEventListener('click', ()=>{
+  document.getElementById('subscribeCard').style.display = 'none';
+});
+document.getElementById('subscribeSubmitBtn').addEventListener('click', async ()=>{
+  const name = document.getElementById('subscribeName').value.trim();
+  const town = document.getElementById('subscribeTown').value.trim();
+  const facilityType = document.getElementById('subscribeType').value;
+  const labEmail = document.getElementById('subscribeEmail').value.trim();
+  const contactName = document.getElementById('subscribeContact').value.trim();
+  if(!name){ showToast('Enter the facility name.'); return; }
+  if(!labEmail || !labEmail.includes('@')){ showToast('Enter a valid laboratory email.'); return; }
+  try{
+    const res = await fetch(API_BASE + '/facilities/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, town, facilityType, labEmail, contactName }),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Registration failed.');
+    showToast(data.message || 'Registration submitted.');
+    document.getElementById('subscribeName').value = '';
+    document.getElementById('subscribeTown').value = '';
+    document.getElementById('subscribeEmail').value = '';
+    document.getElementById('subscribeContact').value = '';
+    document.getElementById('subscribeCard').style.display = 'none';
+  }catch(e){ showToast(e.message); }
+});
+
 
 /* ---------------- Init ---------------- */
 (async function init(){

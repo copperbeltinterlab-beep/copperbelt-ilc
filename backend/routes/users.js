@@ -82,10 +82,30 @@ router.post('/', requireAuth, requireRole('superadmin', 'facilityadmin'), async 
   // body is never trusted for this — it's silently forced to the normal email flow.
   const useBypass = req.user.role === 'superadmin' && activationMethod === 'bypass';
 
-  const { rows: dupe } = await pool.query(
-    'select id from users where username = $1 or email = $2', [username, email]
+  const trimmedUsername = String(username).trim();
+  const trimmedEmail = String(email).trim();
+  username = trimmedUsername;
+  email = trimmedEmail;
+
+  const { rows: userDupes } = await pool.query(
+    `select id, username, email from users
+      where lower(username) = lower($1) or lower(email) = lower($2)`,
+    [trimmedUsername, trimmedEmail]
   );
-  if (dupe.length) return res.status(409).json({ error: 'That username or email is already in use.' });
+  if (userDupes.length) {
+    const byUser = userDupes.find(u => u.username.toLowerCase() === trimmedUsername.toLowerCase());
+    const byEmail = userDupes.find(u => (u.email || '').toLowerCase() === trimmedEmail.toLowerCase());
+    if (byUser && byEmail && byUser.id === byEmail.id) {
+      return res.status(409).json({ error: `Username "${byUser.username}" and email are already in use.` });
+    }
+    if (byUser) {
+      return res.status(409).json({ error: `Username "${byUser.username}" is already taken. Choose a different username.` });
+    }
+    if (byEmail) {
+      return res.status(409).json({ error: `Email "${byEmail.email}" is already registered to another account.` });
+    }
+    return res.status(409).json({ error: 'That username or email is already in use.' });
+  }
 
   const token = randomToken();
   const expires = new Date(Date.now() + ACTIVATION_WINDOW_MS);
@@ -253,11 +273,26 @@ router.patch('/:id/details', requireAuth, requireRole('superadmin', 'facilityadm
     return res.status(403).json({ error: 'You can only manage users at your own facility.' });
   }
 
-  const { rows: dupe } = await pool.query(
-    'select id from users where (username = $1 or email = $2) and id != $3',
-    [username, email, req.params.id]
+  const trimmedUsername = String(username).trim();
+  const trimmedEmail = String(email).trim();
+  const { rows: userDupes } = await pool.query(
+    `select id, username, email from users
+      where (lower(username) = lower($1) or lower(email) = lower($2)) and id != $3`,
+    [trimmedUsername, trimmedEmail, req.params.id]
   );
-  if (dupe.length) return res.status(409).json({ error: 'That username or email is already in use.' });
+  if (userDupes.length) {
+    const byUser = userDupes.find(u => u.username.toLowerCase() === trimmedUsername.toLowerCase());
+    if (byUser) {
+      return res.status(409).json({ error: `Username "${byUser.username}" is already taken. Choose a different username.` });
+    }
+    const byEmail = userDupes.find(u => (u.email || '').toLowerCase() === trimmedEmail.toLowerCase());
+    if (byEmail) {
+      return res.status(409).json({ error: `Email "${byEmail.email}" is already registered to another account.` });
+    }
+    return res.status(409).json({ error: 'That username or email is already in use.' });
+  }
+  username = trimmedUsername;
+  email = trimmedEmail;
 
   const { rows } = await pool.query(
     'update users set name = $1, username = $2, email = $3 where id = $4 returning *',
@@ -298,6 +333,39 @@ router.get('/facility-admin-counts', requireAuth, requireRole('superadmin'), asy
   const map = {};
   rows.forEach(r => { map[r.facility_id] = r.count; });
   res.json(map);
+});
+
+
+// POST /api/users/:id/admin-set-password — Super Admin only, special circumstances.
+// Sets a new password the user can use immediately (communicate offline; not emailed).
+router.post('/:id/admin-set-password', requireAuth, requireRole('superadmin'), async (req, res) => {
+  const password = (req.body.password || '').trim();
+  if (!password || password.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+  }
+  const { rows: existingRows } = await pool.query('select * from users where id = $1', [req.params.id]);
+  const target = existingRows[0];
+  if (!target) return res.status(404).json({ error: 'User not found.' });
+  if (Number(target.id) === Number(req.user.id)) {
+    return res.status(400).json({ error: 'Use Change password for your own account.' });
+  }
+
+  const hash = await bcrypt.hash(password, 10);
+  const { rows } = await pool.query(
+    `update users set
+       password_hash = $1,
+       status = 'active',
+       reset_token = null,
+       reset_expires = null,
+       activation_token = null,
+       activation_expires = null
+     where id = $2 returning *`,
+    [hash, target.id]
+  );
+  res.json({
+    message: `Password updated for ${rows[0].name} (${rows[0].username}). Share the new password securely offline.`,
+    user: publicUser(rows[0]),
+  });
 });
 
 module.exports = router;
