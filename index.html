@@ -3196,7 +3196,7 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
       </table>
 
       <div style="margin:8px 0 12px; padding:8px 10px; border:1px solid #c9d6d1; background:#f7faf8; font-size:9pt;">
-        <div style="font-weight:600; margin-bottom:4px; font-size:10pt;">SADCAS TR 08 § 4.4.3 — Report basis</div>
+        <div style="font-weight:600; margin-bottom:4px; font-size:10pt;">Report basis</div>
         <p style="margin:4px 0;"><strong>Participants:</strong> This report is issued to the participant laboratory named above. Other laboratories participated in the same round; individual identities of peer participants are managed by the programme and are not listed on single-facility performance reports.</p>
         <p style="margin:4px 0;"><strong>Measurement protocol:</strong> Testing was performed according to the round Testing Instructions. Each laboratory used its routine method/instrument as recorded at submission (see Method/Instrument above).</p>
         <p style="margin:4px 0;"><strong>Measurement standard / artefact:</strong> ${label ? label + ' — ' : ''}${testDef.name}. Sample ID(s): ${sampleIdsText}.</p>
@@ -3207,7 +3207,7 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
       ${resultsHtml}
 
       <div style="margin:12px 0 4px; font-size:10pt;">
-        <strong>Conclusion (TR 08 4.4.3)</strong>
+        <strong>Conclusion</strong>
         <p style="margin:4px 0; font-size:10pt;">${conclusionText}</p>
         <strong>Unacceptable analytes:</strong>
         ${overallHtml}
