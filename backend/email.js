@@ -1,4 +1,21 @@
+/**
+ * Outbound email for Copperbelt ILC.
+ *
+ * Preferred on free Render: Resend HTTPS API (RESEND_API_KEY).
+ * Optional fallback: SMTP (blocked on many free PaaS plans — leave unset on Render free).
+ *
+ * Setup (Resend):
+ * 1. Create account at https://resend.com
+ * 2. API Keys → Create API key → copy to RESEND_API_KEY on Render
+ * 3. Until you verify a domain, "From" must be onboarding@resend.dev and you can only
+ *    send to the email address of your Resend account. After domain verify, use your domain.
+ * 4. Set RESEND_FROM_EMAIL and APP_URL on Render, redeploy.
+ */
+
 const nodemailer = require('nodemailer');
+
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const RESEND_CONFIGURED = !!RESEND_API_KEY;
 
 const SMTP_CONFIGURED = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 
@@ -6,21 +23,65 @@ const transporter = SMTP_CONFIGURED
   ? nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT) || 587,
-      // Port 465 is implicit TLS; anything else (587, 25) starts plaintext and upgrades via
-      // STARTTLS. SMTP_SECURE lets you override this if a provider doesn't follow that norm.
-      secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : Number(process.env.SMTP_PORT) === 465,
+      secure: process.env.SMTP_SECURE
+        ? process.env.SMTP_SECURE === 'true'
+        : Number(process.env.SMTP_PORT) === 465,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      family: 4, // prefer IPv4 when SMTP is available
+      connectionTimeout: 15000,
     })
   : null;
 
-const FROM = process.env.SMTP_FROM_EMAIL || 'Copperbelt ILC <no-reply@example.com>';
+const FROM =
+  process.env.RESEND_FROM_EMAIL ||
+  process.env.SMTP_FROM_EMAIL ||
+  'Copperbelt ILC <onboarding@resend.dev>';
+
 const APP_URL = process.env.APP_URL || 'http://localhost:5500';
 
+async function sendViaResend({ to, subject, html }) {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: FROM,
+      to: [to],
+      subject,
+      html,
+    }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = body.message || body.error || JSON.stringify(body) || res.statusText;
+    throw new Error(`Resend API ${res.status}: ${msg}`);
+  }
+  return body;
+}
+
 async function sendMail({ to, subject, html }) {
+  // Prefer HTTPS API (works on free Render). SMTP is optional fallback only.
+  if (RESEND_CONFIGURED) {
+    try {
+      await sendViaResend({ to, subject, html });
+      return;
+    } catch (e) {
+      console.error('Failed to send email via Resend:', e.message);
+      // Fall through to SMTP if configured
+      if (!transporter) return;
+    }
+  }
+
   if (!transporter) {
-    console.warn('SMTP_HOST/SMTP_USER/SMTP_PASS not set — skipping email send. Would have sent:', { to, subject });
+    console.warn(
+      'No email provider configured (set RESEND_API_KEY for HTTPS on Render free). Would have sent:',
+      { to, subject }
+    );
     return;
   }
+
   try {
     await transporter.sendMail({ from: FROM, to, subject, html });
   } catch (e) {
@@ -99,10 +160,25 @@ async function sendDeletionRequestEmail({ to, requesterName, facilityName, round
   });
 }
 
+async function sendQueryResponseEmail({ to, recipientName, providerFacilityName, responseBody, context }) {
+  await sendMail({
+    to,
+    subject: `Response to your ILC query${context ? ' — ' + context : ''}`,
+    html: `${brandHeader()}
+      <p>Hello ${recipientName || ''},</p>
+      <p><strong>${providerFacilityName}</strong> has responded to a query from your laboratory.</p>
+      ${context ? `<p><strong>Regarding:</strong> ${context}</p>` : ''}
+      <p><strong>Response:</strong></p>
+      <p style="white-space:pre-wrap; border-left:3px solid #0d3b30; padding-left:12px;">${responseBody}</p>
+      <p><a href="${APP_URL}" style="background:#0d3b30;color:#fff;padding:10px 18px;text-decoration:none;border-radius:6px;">Open Copperbelt ILC</a></p>`,
+  });
+}
+
 module.exports = {
   sendActivationEmail,
   sendPasswordResetEmail,
   sendFeedbackReleasedEmail,
   sendFollowUpQueryEmail,
   sendDeletionRequestEmail,
+  sendQueryResponseEmail,
 };

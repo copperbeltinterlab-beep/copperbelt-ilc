@@ -594,7 +594,17 @@
     <!-- FACILITY USER -->
     <section class="tab-panel" id="tab-queries">
       <h2 class="section">Queries from participating facilities</h2>
-      <p class="note">Follow-up questions about samples and feedback for rounds your facility provides. Unread items are highlighted.</p>
+      <p class="note">Follow-up questions about samples and feedback for rounds your facility provides. Reply to close the loop; all users at the querying facility are notified when you respond.</p>
+      <div class="btn-row" style="margin:0 0 12px; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button type="button" class="secondary small queries-status-filter active" data-status="unread">Unread</button>
+        <button type="button" class="secondary small queries-status-filter" data-status="read">Read</button>
+        <button type="button" class="secondary small queries-status-filter" data-status="all">All</button>
+        <label style="margin:0; display:inline-flex; align-items:center; gap:6px; font-size:12px;">Facility
+          <select id="queriesFacilityFilter" style="width:auto; min-width:180px; margin:0;">
+            <option value="">All facilities</option>
+          </select>
+        </label>
+      </div>
       <div id="queriesInboxList"></div>
     </section>
 
@@ -2088,30 +2098,80 @@ function renderOversight(){
 }
 
 /* ---------------- Facility Admin: Queries inbox ---------------- */
+let queriesInboxStatus = 'unread';
+let queriesInboxFacilityId = '';
+
 async function renderQueriesInbox(){
   const el = document.getElementById('queriesInboxList');
   if(!el) return;
+  // Status filter buttons
+  document.querySelectorAll('.queries-status-filter').forEach(b=>{
+    b.classList.toggle('active', b.dataset.status === queriesInboxStatus);
+  });
   try{
-    const items = await api('/rounds/queries/inbox');
-    if(!items.length){ el.innerHTML = '<div class="empty">No queries yet.</div>'; return; }
+    const params = new URLSearchParams({ status: queriesInboxStatus });
+    if(queriesInboxFacilityId) params.set('facilityId', queriesInboxFacilityId);
+    const items = await api('/rounds/queries/inbox?' + params.toString());
+
+    // Populate facility filter from full inbox (all) once
+    const facSel = document.getElementById('queriesFacilityFilter');
+    if(facSel && !facSel.dataset.wired){
+      facSel.addEventListener('change', ()=>{
+        queriesInboxFacilityId = facSel.value;
+        renderQueriesInbox();
+      });
+      facSel.dataset.wired = '1';
+    }
+    if(facSel){
+      const allItems = await api('/rounds/queries/inbox?status=all');
+      const facMap = {};
+      allItems.forEach(q=>{
+        if(q.fromFacilityId) facMap[q.fromFacilityId] = q.fromFacilityName || ('Facility '+q.fromFacilityId);
+      });
+      const cur = queriesInboxFacilityId;
+      facSel.innerHTML = '<option value="">All facilities</option>' +
+        Object.entries(facMap).sort((a,b)=>a[1].localeCompare(b[1]))
+          .map(([id,name])=>`<option value="${id}" ${String(id)===String(cur)?'selected':''}>${name}</option>`).join('');
+    }
+
+    if(!items.length){
+      el.innerHTML = `<div class="empty">No ${queriesInboxStatus === 'all' ? '' : queriesInboxStatus + ' '}queries${queriesInboxFacilityId ? ' for this facility' : ''}.</div>`;
+      updateQueriesBadge();
+      return;
+    }
     el.innerHTML = items.map(q=>{
-      const safeMsg = String(q.message||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
-      return `
-      <div class="card" style="${q.unread ? 'border-color:var(--gold); box-shadow:0 0 0 1px var(--gold);' : ''}">
-        <div class="row-item" style="border:none; padding-top:0; flex-wrap:wrap;">
+      const when = q.createdAt ? new Date(q.createdAt).toLocaleString() : '—';
+      const testName = testById(q.testId) ? testById(q.testId).name : (q.testId || '—');
+      const badge = q.unread
+        ? '<span class="badge" style="background:#fde2e2;color:#8a1f1f;">Unread</span>'
+        : '<span class="badge" style="background:#e8eee9;color:#555;">Read</span>';
+      const responseBlock = q.hasResponse
+        ? `<div style="margin-top:10px; padding:10px; background:#eef6f2; border-radius:8px; border:1px solid #c9d6d1;">
+             <div class="meta" style="margin-bottom:4px;"><strong>Your response</strong> ${q.respondedAt ? new Date(q.respondedAt).toLocaleString() : ''}${q.respondedByName ? ' · '+q.respondedByName : ''}</div>
+             <div style="white-space:pre-wrap; font-size:13px;">${escapeHtml(q.responseMessage)}</div>
+           </div>`
+        : `<div style="margin-top:10px;">
+             <label style="margin-top:0;">Response to facility</label>
+             <textarea id="query-response-${q.id}" rows="3" placeholder="Enter your response (visible to the querying facility; all their users are notified)…"></textarea>
+             <button class="primary small send-query-response" data-id="${q.id}" style="margin-top:6px;">Send response</button>
+           </div>`;
+      return `<div class="card" style="${q.unread ? 'border-color:#c08a2e;' : ''}">
+        <div class="row-item" style="border:none; padding:0; flex-wrap:wrap; gap:8px;">
           <div>
-            <strong>Sample ${q.sampleId || '—'}</strong>
-            ${q.unread ? ' <span class="badge" style="background:#fff3c4;color:#7a5b00;">Unread</span>' : ''}
-            <div class="meta">From ${q.fromFacilityName || '—'} (${q.fromUserName || 'user'}) · ${q.createdAt ? new Date(q.createdAt).toLocaleString() : ''}</div>
-            <div class="meta">${testById(q.testId) ? testById(q.testId).name : (q.testId || '')}</div>
+            <strong>${q.fromFacilityCode ? q.fromFacilityCode + ' · ' : ''}${q.fromFacilityName || 'Facility'}</strong>
+            ${badge}
+            <div class="meta">${testName} · Sample ${q.sampleId || '—'} · ${when}</div>
+            <div class="meta">From: ${q.fromUserName || '—'}</div>
+          </div>
+          <div>
+            ${q.unread ? `<button class="secondary small mark-query-read" data-id="${q.id}">Mark read</button>` : ''}
           </div>
         </div>
-        <p style="margin:8px 0; white-space:pre-wrap;">${safeMsg}</p>
-        <div class="btn-row">
-          ${q.unread ? `<button class="secondary small mark-query-read" data-id="${q.id}">Mark as read</button>` : ''}
-        </div>
+        <div style="margin-top:8px; white-space:pre-wrap; font-size:13.5px;">${escapeHtml(q.message)}</div>
+        ${responseBlock}
       </div>`;
     }).join('');
+
     el.querySelectorAll('.mark-query-read').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
         try{
@@ -2121,15 +2181,43 @@ async function renderQueriesInbox(){
         }catch(e){ showToast(e.message); }
       });
     });
+    el.querySelectorAll('.send-query-response').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const ta = document.getElementById('query-response-' + btn.dataset.id);
+        const responseMessage = (ta && ta.value || '').trim();
+        if(!responseMessage){ showToast('Enter a response.'); return; }
+        btn.disabled = true;
+        try{
+          const res = await api(`/rounds/queries/${btn.dataset.id}/respond`, { method:'POST', body:{ responseMessage } });
+          showToast(res.message || 'Response sent.');
+          renderQueriesInbox();
+          updateQueriesBadge();
+        }catch(e){ showToast(e.message); }
+        finally{ btn.disabled = false; }
+      });
+    });
+    updateQueriesBadge();
   }catch(e){
     el.innerHTML = `<div class="empty">${e.message}</div>`;
   }
 }
+
+document.querySelectorAll('.queries-status-filter').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    queriesInboxStatus = btn.dataset.status;
+    renderQueriesInbox();
+  });
+});
+
+function escapeHtml(s){
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 async function updateQueriesBadge(){
   if(!session || session.role !== 'facilityadmin') return;
   try{
-    const items = await api('/rounds/queries/inbox');
-    const n = items.filter(q=>q.unread).length;
+    const items = await api('/rounds/queries/inbox?status=unread');
+    const n = items.length;
     const btn = document.querySelector('.nav-btn[data-tab="queries"]');
     if(!btn) return;
     btn.textContent = n > 0 ? `Queries (${n})` : 'Queries';
