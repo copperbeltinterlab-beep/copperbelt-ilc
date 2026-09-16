@@ -2159,14 +2159,10 @@ async function renderQueriesInbox(){
       const badge = q.unread
         ? '<span class="badge" style="background:#fde2e2;color:#8a1f1f;">Unread</span>'
         : '<span class="badge" style="background:#e8eee9;color:#555;">Read</span>';
-      const responseBlock = q.hasResponse
-        ? `<div style="margin-top:10px; padding:10px; background:#eef6f2; border-radius:8px; border:1px solid #c9d6d1;">
-             <div class="meta" style="margin-bottom:4px;"><strong>Your response</strong> ${q.respondedAt ? new Date(q.respondedAt).toLocaleString() : ''}${q.respondedByName ? ' · '+q.respondedByName : ''}</div>
-             <div style="white-space:pre-wrap; font-size:13px;">${escapeHtml(q.responseMessage)}</div>
-           </div>`
-        : `<div style="margin-top:10px;">
-             <label style="margin-top:0;">Response to facility</label>
-             <textarea id="query-response-${q.id}" rows="3" placeholder="Enter your response (visible to the querying facility; all their users are notified)…"></textarea>
+      const thread = renderQueryThreadHtml(q.messages);
+      const responseBlock = `<div style="margin-top:10px;">
+             <label style="margin-top:0;">${q.hasResponse ? 'Reply again' : 'Response to facility'}</label>
+             <textarea id="query-response-${q.id}" rows="3" placeholder="Enter your response (all users at the querying facility are notified)…"></textarea>
              <button class="primary small send-query-response" data-id="${q.id}" style="margin-top:6px;">Send response</button>
            </div>`;
       return `<div class="card" style="${q.unread ? 'border-color:#c08a2e;' : ''}">
@@ -2181,7 +2177,7 @@ async function renderQueriesInbox(){
             ${q.unread ? `<button class="secondary small mark-query-read" data-id="${q.id}">Mark read</button>` : ''}
           </div>
         </div>
-        <div style="margin-top:8px; white-space:pre-wrap; font-size:13.5px;">${escapeHtml(q.message)}</div>
+        ${thread || `<div style="margin-top:8px; white-space:pre-wrap; font-size:13.5px;">${escapeHtml(q.message)}</div>`}
         ${responseBlock}
       </div>`;
     }).join('');
@@ -2223,6 +2219,19 @@ document.querySelectorAll('.queries-status-filter').forEach(btn=>{
   });
 });
 
+function renderQueryThreadHtml(messages){
+  if(!messages || !messages.length) return '';
+  return `<div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
+    ${messages.map(m=>{
+      const when = m.createdAt ? new Date(m.createdAt).toLocaleString() : '';
+      const who = [m.authorFacilityCode, m.authorFacilityName, m.authorName].filter(Boolean).join(' · ') || '—';
+      return `<div style="padding:8px 10px; background:#f2f6f4; border-radius:8px; border:1px solid #c9d6d1;">
+        <div class="meta" style="margin-bottom:4px;">${escapeHtml(who)}${when ? ' · ' + when : ''}</div>
+        <div style="white-space:pre-wrap; font-size:13px;">${escapeHtml(m.body)}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
 function escapeHtml(s){
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -2281,27 +2290,24 @@ async function renderNotifications(){
             ? '<span class="badge" style="background:#fbead2;color:#7a5b00;">New response</span>'
             : '<span class="badge" style="background:#dff0e7;color:#2f7a5e;">Responded</span>')
         : '<span class="badge" style="background:#f7dedc;color:#b8433b;">Awaiting response</span>';
-      const responseHtml = q.hasResponse
-        ? `<div style="margin-top:10px; padding:10px; background:#eef6f2; border-radius:8px; border:1px solid #c9d6d1;">
-             <div class="meta" style="margin-bottom:4px;"><strong>Response from ${q.providerFacilityName || 'providing facility'}</strong>
-               ${q.respondedAt ? ' · ' + new Date(q.respondedAt).toLocaleString() : ''}
-               ${q.respondedByName ? ' · ' + q.respondedByName : ''}
-             </div>
-             <div style="white-space:pre-wrap; font-size:13px;">${escapeHtml(q.responseMessage)}</div>
-           </div>`
-        : `<div class="meta" style="margin-top:8px;">No response yet from the providing facility.</div>`;
+      const thread = renderQueryThreadHtml(q.messages) || `<div style="margin-top:8px; white-space:pre-wrap; font-size:13.5px;"><strong>Your query:</strong><br>${escapeHtml(q.message)}</div>`;
+      const replyBox = `<div style="margin-top:10px;">
+             <label style="margin-top:0;">Need more clarity? Reply</label>
+             <textarea id="query-reply-${q.id}" rows="3" placeholder="Ask a follow-up question…"></textarea>
+             <button class="primary small send-query-reply" data-id="${q.id}" style="margin-top:6px;">Send follow-up</button>
+           </div>`;
       return `<div class="card" style="${isNew ? 'border-color:#c08a2e;' : ''}">
         <div class="row-item" style="border:none; padding:0; flex-wrap:wrap; gap:8px;">
           <div>
             <strong>${testName} · Sample ${q.sampleId || '—'}</strong>
             ${statusBadge}
-            <div class="meta">Sent ${when}${q.fromUserName ? ' by ' + q.fromUserName : ''}</div>
-            <div class="meta">To: ${q.providerFacilityName || 'providing facility'}</div>
+            <div class="meta">Opened ${when}${q.fromUserName ? ' by ' + q.fromUserName : ''}</div>
+            <div class="meta">With: ${q.providerFacilityName || 'providing facility'}</div>
           </div>
           ${isNew ? `<button class="secondary small mark-notif-seen" data-id="${q.id}">Mark seen</button>` : ''}
         </div>
-        <div style="margin-top:8px; white-space:pre-wrap; font-size:13.5px;"><strong>Your query:</strong><br>${escapeHtml(q.message)}</div>
-        ${responseHtml}
+        ${thread}
+        ${replyBox}
       </div>`;
     }).join('');
 
@@ -2310,6 +2316,22 @@ async function renderNotifications(){
         markQueryResponseSeen(btn.dataset.id);
         renderNotifications();
         updateNotificationsBadge();
+      });
+    });
+    el.querySelectorAll('.send-query-reply').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const ta = document.getElementById('query-reply-' + btn.dataset.id);
+        const message = (ta && ta.value || '').trim();
+        if(!message){ showToast('Enter a follow-up message.'); return; }
+        btn.disabled = true;
+        try{
+          const res = await api(`/rounds/queries/${btn.dataset.id}/reply`, { method:'POST', body:{ message } });
+          showToast(res.message || 'Follow-up sent.');
+          if(ta) ta.value = '';
+          renderNotifications();
+          updateNotificationsBadge();
+        }catch(e){ showToast(e.message); }
+        finally{ btn.disabled = false; }
       });
     });
     // Auto-mark seen when viewing responded items in "new" filter after open - optional: mark all visible new as seen on view

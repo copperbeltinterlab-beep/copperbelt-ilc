@@ -344,15 +344,102 @@ async function ensureQueriesTable() {
       read_at timestamptz,
       read_by integer references users(id) on delete set null
     )`);
-  // Reply / audit trail columns (provider response back to the querying facility)
   await pool.query(`alter table submission_queries add column if not exists response_message text`);
   await pool.query(`alter table submission_queries add column if not exists responded_at timestamptz`);
   await pool.query(`alter table submission_queries add column if not exists responded_by integer references users(id) on delete set null`);
   await pool.query(`alter table submission_queries add column if not exists response_notified_at timestamptz`);
+  // Threaded messages for multi-turn query conversations (audit trail)
+  await pool.query(`
+    create table if not exists submission_query_messages (
+      id serial primary key,
+      query_id integer not null references submission_queries(id) on delete cascade,
+      author_user_id integer references users(id) on delete set null,
+      author_facility_id integer references facilities(id) on delete set null,
+      body text not null,
+      created_at timestamptz not null default now()
+    )`);
+  await pool.query(`create index if not exists idx_sqm_query on submission_query_messages(query_id)`);
 }
 
-// POST /api/rounds/:roundId/submissions/:subId/query — Facility User follow-up about their
-// own submission. Stored for in-app notification at the providing facility, and emailed.
+async function loadQueryMessages(queryId) {
+  const { rows } = await pool.query(
+    `select m.*, u.name as author_name, f.name as author_facility_name, f.facility_code as author_facility_code
+     from submission_query_messages m
+     left join users u on u.id = m.author_user_id
+     left join facilities f on f.id = m.author_facility_id
+     where m.query_id = $1
+     order by m.created_at asc`,
+    [queryId]
+  );
+  return rows.map(m => ({
+    id: m.id,
+    body: m.body,
+    createdAt: m.created_at,
+    authorUserId: m.author_user_id,
+    authorName: m.author_name,
+    authorFacilityId: m.author_facility_id,
+    authorFacilityName: m.author_facility_name,
+    authorFacilityCode: m.author_facility_code || null,
+  }));
+}
+
+async function attachMessages(list) {
+  for (const item of list) {
+    item.messages = await loadQueryMessages(item.id);
+    // If thread empty but legacy fields exist, surface them as synthetic messages
+    if (!item.messages.length) {
+      const synth = [];
+      if (item.message) {
+        synth.push({
+          id: 'orig-' + item.id,
+          body: item.message,
+          createdAt: item.createdAt,
+          authorName: item.fromUserName,
+          authorFacilityName: item.fromFacilityName,
+          authorFacilityCode: item.fromFacilityCode,
+          legacy: true,
+        });
+      }
+      if (item.responseMessage) {
+        synth.push({
+          id: 'resp-' + item.id,
+          body: item.responseMessage,
+          createdAt: item.respondedAt,
+          authorName: item.respondedByName,
+          authorFacilityName: null,
+          legacy: true,
+        });
+      }
+      item.messages = synth;
+    }
+  }
+  return list;
+}
+
+function mapQueryRow(q) {
+  return {
+    id: q.id,
+    roundId: q.round_id,
+    submissionId: q.submission_id,
+    sampleId: q.sample_id || q.round_sample_id,
+    testId: q.test_id,
+    message: q.message,
+    fromFacilityId: q.from_facility_id,
+    fromFacilityName: q.from_facility_name,
+    fromFacilityCode: q.from_facility_code || null,
+    fromUserName: q.from_user_name,
+    createdAt: q.created_at,
+    readAt: q.read_at,
+    unread: !q.read_at,
+    responseMessage: q.response_message || null,
+    respondedAt: q.responded_at || null,
+    respondedByName: q.responded_by_name || null,
+    hasResponse: !!(q.response_message || q.responded_at),
+    providingFacilityId: q.providing_facility_id || null,
+  };
+}
+
+// POST /api/rounds/:roundId/submissions/:subId/query — start a query thread
 router.post('/:roundId/submissions/:subId/query', requireAuth, requireRole('user', 'facilityadmin'), async (req, res) => {
   const message = (req.body.message || '').trim();
   if (!message) return res.status(400).json({ error: 'Enter a message before sending.' });
@@ -377,18 +464,23 @@ router.post('/:roundId/submissions/:subId/query', requireAuth, requireRole('user
   const facilityName = facRows[0] ? facRows[0].name : 'Unknown facility';
 
   await ensureQueriesTable();
-  await pool.query(
+  const { rows: ins } = await pool.query(
     `insert into submission_queries
        (round_id, submission_id, from_facility_id, from_user_id, sample_id, message)
-     values ($1, $2, $3, $4, $5, $6)`,
+     values ($1, $2, $3, $4, $5, $6) returning *`,
     [round.id, submission.id, req.user.facilityId, req.user.id, round.sample_id || null, message]
+  );
+  const queryRow = ins[0];
+  await pool.query(
+    `insert into submission_query_messages (query_id, author_user_id, author_facility_id, body)
+     values ($1, $2, $3, $4)`,
+    [queryRow.id, req.user.id, req.user.facilityId, message]
   );
 
   const { rows: recipientRows } = await pool.query(
     `select email from users where facility_id = $1 and role = 'facilityadmin' and status = 'active' and email is not null`,
     [round.providing_facility_id]
   );
-
   const { rows: providerRows } = await pool.query('select name from facilities where id = $1', [round.providing_facility_id]);
   const providerName = providerRows[0] ? providerRows[0].name : 'the providing facility';
 
@@ -405,30 +497,7 @@ router.post('/:roundId/submissions/:subId/query', requireAuth, requireRole('user
   res.json({ message: `Your query has been sent to ${providerName}.` });
 });
 
-function mapQueryRow(q) {
-  return {
-    id: q.id,
-    roundId: q.round_id,
-    submissionId: q.submission_id,
-    sampleId: q.sample_id || q.round_sample_id,
-    testId: q.test_id,
-    message: q.message,
-    fromFacilityId: q.from_facility_id,
-    fromFacilityName: q.from_facility_name,
-    fromFacilityCode: q.from_facility_code || null,
-    fromUserName: q.from_user_name,
-    createdAt: q.created_at,
-    readAt: q.read_at,
-    unread: !q.read_at,
-    responseMessage: q.response_message || null,
-    respondedAt: q.responded_at || null,
-    respondedByName: q.responded_by_name || null,
-    hasResponse: !!q.response_message,
-  };
-}
-
-// GET /api/rounds/queries/inbox — providing Facility Admin inbox
-// Query params: status=unread|read|all (default all), facilityId= optional filter by sender facility
+// GET /api/rounds/queries/inbox
 router.get('/queries/inbox', requireAuth, requireRole('facilityadmin'), async (req, res) => {
   await ensureQueriesTable();
   const status = String(req.query.status || 'all').toLowerCase();
@@ -457,10 +526,10 @@ router.get('/queries/inbox', requireAuth, requireRole('facilityadmin'), async (r
      limit 200`,
     params
   );
-  res.json(rows.map(mapQueryRow));
+  res.json(await attachMessages(rows.map(mapQueryRow)));
 });
 
-// GET /api/rounds/queries/sent — queries sent by my facility (participating lab) + provider replies
+// GET /api/rounds/queries/sent
 router.get('/queries/sent', requireAuth, requireRole('user', 'facilityadmin'), async (req, res) => {
   await ensureQueriesTable();
   if (!req.user.facilityId) return res.json([]);
@@ -480,13 +549,14 @@ router.get('/queries/sent', requireAuth, requireRole('user', 'facilityadmin'), a
      limit 100`,
     [req.user.facilityId]
   );
-  res.json(rows.map(q => ({
+  const mapped = rows.map(q => ({
     ...mapQueryRow(q),
     providerFacilityName: q.provider_facility_name || null,
-  })));
+  }));
+  res.json(await attachMessages(mapped));
 });
 
-// POST /api/rounds/queries/:id/read — mark a query as read (provider inbox)
+// POST /api/rounds/queries/:id/read
 router.post('/queries/:id/read', requireAuth, requireRole('facilityadmin'), async (req, res) => {
   await ensureQueriesTable();
   const { rows } = await pool.query(
@@ -501,7 +571,7 @@ router.post('/queries/:id/read', requireAuth, requireRole('facilityadmin'), asyn
   res.json({ ok: true });
 });
 
-// POST /api/rounds/queries/:id/respond — providing Facility Admin replies (audit trail)
+// POST /api/rounds/queries/:id/respond — providing Facility Admin (can reply multiple times)
 router.post('/queries/:id/respond', requireAuth, requireRole('facilityadmin'), async (req, res) => {
   await ensureQueriesTable();
   const responseMessage = (req.body.responseMessage || req.body.message || '').trim();
@@ -522,9 +592,12 @@ router.post('/queries/:id/respond', requireAuth, requireRole('facilityadmin'), a
   if (q.providing_facility_id !== req.user.facilityId) {
     return res.status(403).json({ error: 'You can only respond to queries for rounds your facility provides.' });
   }
-  if (q.response_message) {
-    return res.status(409).json({ error: 'This query already has a response. Contact Super Admin if a correction is needed.' });
-  }
+
+  await pool.query(
+    `insert into submission_query_messages (query_id, author_user_id, author_facility_id, body)
+     values ($1, $2, $3, $4)`,
+    [q.id, req.user.id, req.user.facilityId, responseMessage]
+  );
 
   const { rows: updated } = await pool.query(
     `update submission_queries
@@ -539,7 +612,6 @@ router.post('/queries/:id/respond', requireAuth, requireRole('facilityadmin'), a
     [responseMessage, req.user.id, q.id]
   );
 
-  // Notify ALL active users at the facility that sent the query (traceability / update)
   const { rows: recipients } = await pool.query(
     `select name, email from users
       where facility_id = $1 and status = 'active' and email is not null`,
@@ -559,9 +631,68 @@ router.post('/queries/:id/respond', requireAuth, requireRole('facilityadmin'), a
     }).catch(err => console.error('Query response email failed:', err.message))));
   }
 
+  const mapped = mapQueryRow({ ...updated[0], round_sample_id: q.round_sample_id, test_id: q.test_id, providing_facility_id: q.providing_facility_id });
+  mapped.messages = await loadQueryMessages(q.id);
   res.json({
     message: `Response sent. ${recipients.length} user(s) at the querying facility will be notified.`,
-    query: mapQueryRow({ ...updated[0], round_sample_id: q.round_sample_id, test_id: q.test_id }),
+    query: mapped,
+  });
+});
+
+// POST /api/rounds/queries/:id/reply — querying facility continues the thread
+router.post('/queries/:id/reply', requireAuth, requireRole('user', 'facilityadmin'), async (req, res) => {
+  await ensureQueriesTable();
+  const body = (req.body.message || req.body.responseMessage || '').trim();
+  if (!body) return res.status(400).json({ error: 'Enter a message before sending.' });
+  if (body.length > MAX_QUERY_MESSAGE_LENGTH) {
+    return res.status(400).json({ error: `Message is too long (max ${MAX_QUERY_MESSAGE_LENGTH} characters).` });
+  }
+
+  const { rows: qRows } = await pool.query(
+    `select q.*, r.sample_id as round_sample_id, r.test_id, r.providing_facility_id
+     from submission_queries q
+     join rounds r on r.id = q.round_id
+     where q.id = $1`,
+    [req.params.id]
+  );
+  const q = qRows[0];
+  if (!q) return res.status(404).json({ error: 'Query not found.' });
+  if (q.from_facility_id !== req.user.facilityId) {
+    return res.status(403).json({ error: 'You can only reply on queries from your own facility.' });
+  }
+
+  await pool.query(
+    `insert into submission_query_messages (query_id, author_user_id, author_facility_id, body)
+     values ($1, $2, $3, $4)`,
+    [q.id, req.user.id, req.user.facilityId, body]
+  );
+
+  // Mark unread again for providing facility inbox
+  await pool.query(
+    `update submission_queries set read_at = null, read_by = null where id = $1`,
+    [q.id]
+  );
+
+  const { rows: facRows } = await pool.query('select name from facilities where id = $1', [req.user.facilityId]);
+  const facilityName = facRows[0] ? facRows[0].name : 'Unknown facility';
+  const { rows: recipientRows } = await pool.query(
+    `select email from users where facility_id = $1 and role = 'facilityadmin' and status = 'active' and email is not null`,
+    [q.providing_facility_id]
+  );
+  const context = `${getTestName(q.test_id)} — Sample ${q.sample_id || q.round_sample_id || ''}`.trim();
+  if (recipientRows.length) {
+    await Promise.all(recipientRows.map(r => sendFollowUpQueryEmail({
+      to: r.email,
+      personnelName: req.user.name,
+      facilityName,
+      messageBody: body,
+      context: context + ' (follow-up)',
+    }).catch(err => console.error('Follow-up query email failed:', err.message))));
+  }
+
+  res.json({
+    message: 'Follow-up sent to the providing facility.',
+    messages: await loadQueryMessages(q.id),
   });
 });
 
