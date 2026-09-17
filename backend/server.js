@@ -11,6 +11,7 @@ const roundPackageRoutes = require('./routes/roundPackages');
 const submissionRoutes = require('./routes/submissions');
 
 const app = express();
+app.set('trust proxy', 1);
 
 app.use(helmet());
 // Allow the configured frontend origin (and common local dev). Exact match required by browsers.
@@ -27,9 +28,12 @@ app.use(cors({
     if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) return cb(null, true);
     // If FRONTEND_ORIGIN unset, fall back to reflecting any origin in development only
     if (!process.env.FRONTEND_ORIGIN) return cb(null, true);
-    return cb(new Error('Not allowed by CORS'));
+    // Do not pass Error to cb — that becomes a 500 and shows as "Failed to fetch"
+    return cb(null, false);
   },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(express.json());
 

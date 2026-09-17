@@ -799,9 +799,16 @@ let authToken = localStorage.getItem('ilc_token') || null;
 async function api(path, { method = 'GET', body } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (authToken) headers.Authorization = 'Bearer ' + authToken;
-  const res = await fetch(API_BASE + path, {
-    method, headers, body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(API_BASE + path, {
+      method, headers, body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    // Browser "Failed to fetch" — network, CORS, or free-tier API still waking up
+    const tip = 'Cannot reach the API. Wait a few seconds and try again (Render free tier may be waking up), or check FRONTEND_ORIGIN / CORS settings.';
+    throw new Error(tip);
+  }
   let data = null;
   try { data = await res.json(); } catch (e) { /* no body */ }
   if (!res.ok) {

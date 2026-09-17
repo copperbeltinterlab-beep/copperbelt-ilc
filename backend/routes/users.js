@@ -320,7 +320,20 @@ router.delete('/:id', requireAuth, requireRole('superadmin', 'facilityadmin'), a
     }
   }
 
-  await pool.query('delete from users where id = $1', [req.params.id]);
+  try {
+    // Clear soft references that may lack ON DELETE SET NULL in older DBs
+    await pool.query('update submissions set tested_by_user_id = null where tested_by_user_id = $1', [req.params.id]);
+    await pool.query('update submissions set verified_by_user_id = null where verified_by_user_id = $1', [req.params.id]);
+    await pool.query('delete from users where id = $1', [req.params.id]);
+  } catch (e) {
+    if (e && e.code === '23503') {
+      return res.status(409).json({
+        error: 'This user is still linked to historical records. Prefer Disable instead of Delete.',
+      });
+    }
+    console.error('User delete failed:', e.message);
+    return res.status(500).json({ error: 'Could not delete user. Try again, or disable the account instead.' });
+  }
   res.json({ deleted: true });
 });
 

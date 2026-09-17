@@ -215,9 +215,36 @@ router.delete('/:id', requireAuth, requireRole('superadmin'), async (req, res) =
       error: `This facility still provides ${roundRows[0].count} round(s) of PT data. It cannot be deleted while that history exists.`,
     });
   }
-  const { rows } = await pool.query('delete from facilities where id = $1 returning id, facility_code', [
-    req.params.id,
-  ]);
+  // Block if packages still owned by this facility
+  try {
+    const { rows: pkgRows } = await pool.query(
+      'select count(*)::int as count from round_packages where providing_facility_id = $1',
+      [req.params.id]
+    );
+    if (pkgRows[0] && pkgRows[0].count > 0) {
+      return res.status(409).json({
+        error: `This facility still has ${pkgRows[0].count} ILC package(s). Delete or reassign those rounds first.`,
+      });
+    }
+  } catch (e) {
+    // table may not exist on very old DBs — ignore
+  }
+
+  let rows;
+  try {
+    const result = await pool.query('delete from facilities where id = $1 returning id, facility_code', [
+      req.params.id,
+    ]);
+    rows = result.rows;
+  } catch (e) {
+    if (e && e.code === '23503') {
+      return res.status(409).json({
+        error: 'This facility is still referenced by other records (users, rounds, or submissions). Remove those first.',
+      });
+    }
+    console.error('Facility delete failed:', e.message);
+    return res.status(500).json({ error: 'Could not delete facility. Check server logs and try again.' });
+  }
   if (!rows[0]) return res.status(404).json({ error: 'Facility not found.' });
   res.json({ deleted: true, freedCode: rows[0].facility_code || null });
 });
