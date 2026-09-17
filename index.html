@@ -3052,13 +3052,14 @@ function quantitativeFieldTable(field, items){
       const fEval = fb.fields[field.key] || {};
       status = fEval.status || 'not_evaluated';
       grade = gradeLabel(status);
+      // N = all participants who reported a numeric result (including outliers).
+      // Mean/SD still use cleaned values only (nUsed); outliers remain in N and are still scored.
+      n = (typeof stat.n === 'number') ? stat.n : '—';
       if(stat.insufficientData){
         mean = 'Insuff.';
         sd = '—';
         range = 'Insufficient data';
-        n = (typeof stat.n === 'number') ? stat.n : '—';
       } else {
-        n = (typeof stat.nUsed === 'number') ? stat.nUsed : (typeof stat.n === 'number' ? stat.n : '—');
         mean = (typeof stat.mean === 'number') ? round2(stat.mean) : '—';
         sd = (typeof stat.sd === 'number') ? round2(stat.sd) : '—';
         if(typeof fEval.sdi === 'number'){
@@ -3139,15 +3140,11 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
   const sampleIdsText = sampleIdsList.length ? sampleIdsList.join(', ') : '—';
   const participantName = facilityName(items[0].sub.facilityId);
   const conclusionText = unacceptableEntries.length
-    ? `Conclusion: ${participantName} recorded ${unacceptableEntries.length} unacceptable analyte result(s) in this round (listed below). The laboratory shall investigate and take corrective action as required under its management system (see also SADCAS TR 08 4.4.4 / ISO 15189).`
+    ? `Conclusion: ${participantName} recorded ${unacceptableEntries.length} unacceptable analyte result(s) in this round (listed below). The laboratory shall investigate and take corrective action as required under its management system under its management system (ISO 15189).`
     : `Conclusion: All evaluated analyte results for ${participantName} in this round met the minimum acceptance criteria. No unacceptable analytes were identified.`;
   const tr08MethodBlock = quant
-    ? `<p style="margin:4px 0; font-size:9pt;"><strong>Reference value(s) and how established:</strong> Assigned values are <em>peer-group consensus</em> — gross outliers are excluded, then the classical mean and standard deviation of remaining results are used. This is consistent with ISO 13528 principles so that extreme values do not dominate the assigned value. Minimum participants for consensus: 3.</p>
-       <p style="margin:4px 0; font-size:9pt;"><strong>Evaluation:</strong> SDI = (laboratory result − consensus mean) / consensus SD. Where SD = 0, an exact match to the consensus value is required.</p>
-       <p style="margin:4px 0; font-size:9pt;"><strong>Minimum acceptance criteria:</strong> Acceptable if |SDI| ≤ 2; Unacceptable if |SDI| &gt; 2. Not evaluated if fewer than 3 reportable results were available. Not performed if marked by the laboratory or the sample was rejected.</p>`
-    : `<p style="margin:4px 0; font-size:9pt;"><strong>Reference value(s) and how established:</strong> For qualitative / categorical tests the assigned result is the <em>majority consensus</em> of participating laboratories (minimum 3 reportable results). Ties or insufficient data are reported as no consensus / not evaluated.</p>
-       <p style="margin:4px 0; font-size:9pt;"><strong>Evaluation:</strong> The laboratory result is compared with the consensus (acceptable result).</p>
-       <p style="margin:4px 0; font-size:9pt;"><strong>Minimum acceptance criteria:</strong> Acceptable if the reported result matches the consensus; Unacceptable if it does not. Not evaluated if consensus cannot be established.</p>`;
+    ? `<p style="margin:4px 0; font-size:9pt;"><strong>Reference / evaluation:</strong> Peer-group mean and SD after excluding gross outliers (ISO 13528 intent). SDI = (result − mean) / SD. Acceptable if |SDI| ≤ 2 (minimum 3 participants).</p>`
+    : `<p style="margin:4px 0; font-size:9pt;"><strong>Reference / evaluation:</strong> Majority consensus of participants (minimum 3). Acceptable if the result matches the consensus.</p>`;
 
   // Testing Personnel — who actually tested/authorized results AT THE PARTICIPATING FACILITY.
   // Deliberately kept in its own section, separate from "Verified and Authorized" below (the
@@ -3197,13 +3194,17 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
 
       <div style="margin:8px 0 12px; padding:8px 10px; border:1px solid #c9d6d1; background:#f7faf8; font-size:9pt;">
         <div style="font-weight:600; margin-bottom:4px; font-size:10pt;">Report basis</div>
-        <p style="margin:4px 0;"><strong>Participants:</strong> This report is issued to the participant laboratory named above. Other laboratories participated in the same round; individual identities of peer participants are managed by the programme and are not listed on single-facility performance reports.</p>
-        <p style="margin:4px 0;"><strong>Measurement protocol:</strong> Testing was performed according to the round Testing Instructions. Each laboratory used its routine method/instrument as recorded at submission (see Method/Instrument above).</p>
-        <p style="margin:4px 0;"><strong>Measurement standard / artefact:</strong> ${label ? label + ' — ' : ''}${testDef.name}. Sample ID(s): ${sampleIdsText}.</p>
+        <p style="margin:4px 0;"><strong>Protocol:</strong> Round Testing Instructions; method/instrument as recorded at submission.</p>
+        <p style="margin:4px 0;"><strong>Artefact:</strong> ${label ? label + ' — ' : ''}${testDef.name}. Samples: ${sampleIdsText}.</p>
         ${tr08MethodBlock}
       </div>
 
       <div style="margin:14px 0 4px; font-size:10pt; font-weight:600;">Performance of the participant (by analyte)</div>
+      ${quant ? `<p style="margin:0 0 8px; font-size:8.5pt; color:#444;"><strong>Key:</strong>
+        <strong>N</strong> = number of participating laboratories that reported a result for that analyte (includes outliers);
+        <strong>SD</strong> = standard deviation of the consensus (after outlier exclusion);
+        <strong>SDI</strong> = (your result − mean) / SD. Acceptable if |SDI| ≤ 2.
+      </p>` : ''}
       ${resultsHtml}
 
       <div style="margin:12px 0 4px; font-size:10pt;">
@@ -3225,7 +3226,6 @@ function buildFeedbackReportHtml(pkg, itemsUnsorted){
 
       <hr style="margin-top:16px;">
       <p style="font-size:8pt; color:#777; margin:0;">Report prepared by the Ministry of Health, Zambia · Copperbelt Province Interlaboratory Programme.</p>
-      <p style="font-size:8pt; color:#777; margin:2px 0 0;">This performance report is structured to address the minimum content of PT/ILC reports under SADCAS TR 08 clause 4.4.3.</p>
     </div>`;
 }
 // One Performance Report per round package, covering every sample this facility submitted
