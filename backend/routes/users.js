@@ -37,6 +37,8 @@ async function facilityAdminCount(facilityId, excludeUserId) {
 // GET /api/users
 // Super Admin: everyone. Facility Admin: only their own facility's users.
 router.get('/', requireAuth, requireRole('superadmin', 'facilityadmin'), async (req, res) => {
+  // Super Admins are not affiliated with any facility (programme-level accounts).
+  await pool.query(`update users set facility_id = null where role = 'superadmin' and facility_id is not null`);
   let rows;
   if (req.user.role === 'superadmin') {
     ({ rows } = await pool.query('select * from users order by name'));
@@ -67,7 +69,9 @@ router.post('/', requireAuth, requireRole('superadmin', 'facilityadmin'), async 
     if (!['superadmin', 'facilityadmin', 'user'].includes(role)) {
       return res.status(400).json({ error: 'Invalid role.' });
     }
-    if (role !== 'superadmin' && !facilityId) {
+    if (role === 'superadmin') {
+      facilityId = null;
+    } else if (!facilityId) {
       return res.status(400).json({ error: 'A facility is required for this role.' });
     }
     if (role === 'facilityadmin') {

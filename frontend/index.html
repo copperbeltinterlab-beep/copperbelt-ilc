@@ -1382,12 +1382,21 @@ function renderAccess(){
     });
   });
 }
+
+document.getElementById('newUserRole').addEventListener('change', ()=>{
+  const role = document.getElementById('newUserRole').value;
+  const fac = document.getElementById('newUserFacility');
+  const wrap = fac && fac.closest('div');
+  if(fac){ fac.disabled = role === 'superadmin'; fac.style.opacity = role === 'superadmin' ? '0.5' : '1'; }
+  if(wrap && role === 'superadmin'){ /* optional */ }
+});
+
 document.getElementById('addUserBtn').addEventListener('click', async ()=>{
   const name = document.getElementById('newUserName').value.trim();
   const username = document.getElementById('newUserUsername').value.trim();
   const email = document.getElementById('newUserEmail').value.trim();
   const role = document.getElementById('newUserRole').value;
-  const facilityId = document.getElementById('newUserFacility').value || null;
+  const facilityId = role === 'superadmin' ? null : (document.getElementById('newUserFacility').value || null);
   const activationMethod = document.getElementById('newUserActivationMethod').value;
   if(!name || !username || !email){ showToast('Fill in name, username and email.'); return; }
   if(role !== 'superadmin' && !facilityId){ showToast('Select a facility, or add one first.'); return; }
