@@ -316,15 +316,45 @@ router.get('/mine/status', requireAuth, requireRole('user'), async (req, res) =>
 // Only shows feedback that has been fully authorized (dual sign-off complete) — a verified-only
 // result is still under internal review and stays hidden from the submitting facility until then.
 router.get('/mine/feedback', requireAuth, requireRole('user'), async (req, res) => {
+  // Join rounds + packages so the client can group all samples of one ILC package into a
+  // single performance report even after the package is closed (users only see *active*
+  // packages on GET /round-packages, which previously broke grouping).
   const { rows } = await pool.query(
-    `select * from submissions where facility_id = $1 and status = 'submitted' order by submitted_at desc`,
+    `select s.*,
+            r.sample_id as round_sample_id,
+            r.test_id as round_test_id,
+            r.deadline as round_deadline,
+            r.providing_facility_id as round_providing_facility_id,
+            r.round_package_id,
+            p.year as package_year,
+            p.round_number as package_round_number,
+            p.deadline as package_deadline,
+            p.providing_facility_id as package_providing_facility_id
+       from submissions s
+       join rounds r on r.id = s.round_id
+       left join round_packages p on p.id = r.round_package_id
+      where s.facility_id = $1 and s.status = 'submitted'
+      order by s.submitted_at desc`,
     [req.user.facilityId]
   );
-  const visible = rows.map(camel).map(s => {
+  const visible = rows.map(row => {
+    const s = camel(row);
     if (s.feedback && !s.feedback.released) {
-      return { ...s, feedback: null }; // hide unreleased (verified-but-not-yet-authorized) feedback
+      s.feedback = null;
     }
-    return s;
+    const year = row.package_year;
+    const rn = row.package_round_number;
+    const packageLabel = (year && rn) ? `Round ${rn} of ${year}`
+      : (year ? `Round — of ${year}` : null);
+    return {
+      ...s,
+      sampleId: row.round_sample_id || null,
+      testId: row.round_test_id || null,
+      packageId: row.round_package_id || null,
+      packageLabel,
+      packageDeadline: row.package_deadline || row.round_deadline || null,
+      providingFacilityId: row.package_providing_facility_id || row.round_providing_facility_id || null,
+    };
   });
   res.json(visible);
 });
