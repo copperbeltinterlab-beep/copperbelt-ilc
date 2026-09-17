@@ -2934,16 +2934,17 @@ async function renderMyFeedback(){
     const queryLinks = items.map(({round,sub})=>
       `<button class="secondary small query-fb" data-round="${round.id}" data-sub="${sub.id}">Query Sample ${round.sampleId}</button>`
     ).join(' ');
-    const key = pkg ? pkg.id : ('unpackaged-'+items[0].round.id);
+    // data-key must match the groups object key ('pkg-'+id), not raw pkg.id
+    const cardKey = pkg && pkg.id != null ? ('pkg-'+pkg.id) : ('unpackaged-'+items[0].round.id);
     return `
       <div class="card">
         <div class="row-item" style="border:none; padding-top:0; flex-wrap:wrap;">
-          <div><strong>${pkg ? pkg.label+' — ' : ''}${test.name}</strong><div class="meta">${items.length} sample${items.length===1?'':'s'} submitted</div></div>
+          <div><strong>${pkg ? (pkg.label ? pkg.label+' — ' : '') : ''}${test.name}</strong><div class="meta">${items.length} sample${items.length===1?'':'s'} submitted</div></div>
         </div>
         <div style="margin:6px 0;">${sampleChips}</div>
         <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
-          <button class="secondary small print-fb-pkg" data-key="${key}">Print feedback</button>
-          <button class="secondary small download-fb-pkg" data-key="${key}">Download PDF</button>
+          <button class="secondary small print-fb-pkg" data-key="${cardKey}">Print feedback</button>
+          <button class="secondary small download-fb-pkg" data-key="${cardKey}">Download PDF</button>
           ${queryLinks}
         </div>
       </div>`;
@@ -2968,13 +2969,31 @@ async function renderMyFeedback(){
   el.querySelectorAll('.print-fb-pkg').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const group = groups[btn.dataset.key];
-      printFeedbackPackage(group.pkg, group.items);
+      if(!group || !group.items || !group.items.length){
+        showToast('Could not load this feedback group. Refresh and try again.');
+        return;
+      }
+      try{
+        printFeedbackPackage(group.pkg, group.items);
+      }catch(e){
+        console.error(e);
+        showToast('Print failed: ' + (e.message || 'unknown error'));
+      }
     });
   });
   el.querySelectorAll('.download-fb-pkg').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const group = groups[btn.dataset.key];
-      downloadFeedbackPackagePdf(group.pkg, group.items);
+      if(!group || !group.items || !group.items.length){
+        showToast('Could not load this feedback group. Refresh and try again.');
+        return;
+      }
+      try{
+        downloadFeedbackPackagePdf(group.pkg, group.items);
+      }catch(e){
+        console.error(e);
+        showToast('PDF failed: ' + (e.message || 'unknown error'));
+      }
     });
   });
 }
@@ -3123,12 +3142,14 @@ function quantitativeFieldTable(field, items){
 // Builds the report HTML (shared by both the Print action and the PDF download action, so
 // they can never drift apart into two different-looking reports).
 function buildFeedbackReportHtml(pkg, itemsUnsorted){
+  if(!itemsUnsorted || !itemsUnsorted.length) throw new Error('No feedback items to report.');
   const items = [...itemsUnsorted].sort((a,b)=>naturalSampleCompare(a.round.sampleId, b.round.sampleId));
   const testDef = testById(items[0].round.testId);
+  if(!testDef) throw new Error('Unknown test on this feedback.');
   const quant = testDef.kind === 'quantitative';
-  const deadline = pkg ? pkg.deadline : items[0].round.deadline;
-  const label = pkg ? pkg.label : '';
-  const providingFacilityId = pkg ? pkg.providingFacilityId : items[0].round.providingFacilityId;
+  const deadline = (pkg && pkg.deadline) || items[0].round.deadline || items[0].sub.packageDeadline || '—';
+  const label = (pkg && pkg.label) || items[0].sub.packageLabel || '';
+  const providingFacilityId = (pkg && pkg.providingFacilityId) || items[0].round.providingFacilityId || items[0].sub.providingFacilityId;
   const allReleased = items.every(({sub})=>sub.feedback && sub.feedback.released);
   const coatOfArmsSrc = (document.getElementById('headerCoatOfArms') || {}).src || '';
 
