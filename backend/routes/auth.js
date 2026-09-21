@@ -78,12 +78,23 @@ router.post('/bootstrap', authLimiter, async (req, res) => {
 });
 
 // POST /api/auth/login
+// Accepts username (normal sign-in) or email (especially for first-time bypass setup,
+// when the account owner has not chosen a username yet).
 router.post('/login', authLimiter, async (req, res) => {
   const { username, password } = req.body;
   if (!username) {
-    return res.status(400).json({ error: 'Username is required.' });
+    return res.status(400).json({ error: 'Username or email is required.' });
   }
-  const { rows } = await pool.query('select * from users where username = $1', [username]);
+  const loginId = String(username).trim();
+  const { rows } = await pool.query(
+    `select * from users
+      where lower(username) = lower($1)
+         or (username is null and lower(email) = lower($1))
+         or lower(email) = lower($1)
+     order by case when lower(username) = lower($1) then 0 else 1 end
+     limit 1`,
+    [loginId]
+  );
   const user = rows[0];
   if (!user) return res.status(401).json({ error: 'Incorrect username or password.' });
 
@@ -94,11 +105,17 @@ router.post('/login', authLimiter, async (req, res) => {
     }
   }
 
-  // Super Admin activation bypass: the account is enabled but has no password yet.
-  // The username alone is enough to route into first-time password setup — no email
-  // link needed, matching the normal login page entry point the user is told to use.
+  // Super Admin activation bypass: the account is enabled but has no username/password yet.
+  // Entering the account email (or username if already set) routes into first-time setup —
+  // no email link needed.
   if (user.status === 'bypass_pending') {
-    return res.json({ requiresSetup: true, setupToken: user.activation_token, name: user.name, username: user.username });
+    return res.json({
+      requiresSetup: true,
+      setupToken: user.activation_token,
+      name: user.name,
+      username: user.username || null,
+      email: user.email || null,
+    });
   }
 
   if (user.status === 'pending_activation') {
@@ -137,7 +154,7 @@ router.get('/me', requireAuth, async (req, res) => {
   res.json({ user: publicUser(user) });
 });
 
-// GET /api/auth/activation-info?token=... — used by the activation page to show the name/username
+// GET /api/auth/activation-info?token=... — used by the activation page to show the name
 router.get('/activation-info', async (req, res) => {
   const { token } = req.query;
   const { rows } = await pool.query('select * from users where activation_token = $1', [token]);
@@ -150,12 +167,14 @@ router.get('/activation-info', async (req, res) => {
     await pool.query(`update users set status = 'activation_expired' where id = $1`, [user.id]);
     return res.status(400).json({ error: 'This activation link has expired. Ask your administrator to resend it.' });
   }
-  res.json({ name: user.name, username: user.username });
+  res.json({ name: user.name, email: user.email || null });
 });
 
-// POST /api/auth/activate — { token, password }
+// POST /api/auth/activate — { token, username, password }
+// The account owner chooses their own username and password here (not the admin).
 router.post('/activate', async (req, res) => {
   const { token, password } = req.body;
+  let { username } = req.body;
   if (!token || !password) return res.status(400).json({ error: 'Missing token or password.' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
 
@@ -172,12 +191,32 @@ router.post('/activate', async (req, res) => {
     return res.status(400).json({ error: 'This activation link has expired. Ask your administrator to resend it.' });
   }
 
+  const trimmedUsername = username != null ? String(username).trim() : '';
+  if (!trimmedUsername) {
+    return res.status(400).json({ error: 'Please choose a username.' });
+  }
+  if (trimmedUsername.length < 3) {
+    return res.status(400).json({ error: 'Username must be at least 3 characters.' });
+  }
+  // Reject usernames that look like emails to keep login unambiguous.
+  if (trimmedUsername.includes('@')) {
+    return res.status(400).json({ error: 'Username cannot be an email address. Choose a short login name instead.' });
+  }
+
+  const { rows: taken } = await pool.query(
+    `select id from users where lower(username) = lower($1) and id != $2`,
+    [trimmedUsername, user.id]
+  );
+  if (taken.length) {
+    return res.status(409).json({ error: `Username "${trimmedUsername}" is already taken. Choose a different username.` });
+  }
+
   const hash = await bcrypt.hash(password, 10);
   const { rows: updated } = await pool.query(
-    `update users set password_hash = $1, status = 'active', activation_token = null, activation_expires = null,
+    `update users set username = $1, password_hash = $2, status = 'active', activation_token = null, activation_expires = null,
             setup_completed_at = now()
-     where id = $2 returning *`,
-    [hash, user.id]
+     where id = $3 returning *`,
+    [trimmedUsername, hash, user.id]
   );
   const activeUser = updated[0];
   res.json({ token: signToken(activeUser), user: publicUser(activeUser) });

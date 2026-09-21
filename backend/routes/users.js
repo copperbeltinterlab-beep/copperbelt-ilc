@@ -54,12 +54,13 @@ router.get('/', requireAuth, requireRole('superadmin', 'facilityadmin'), async (
 // POST /api/users
 // Super Admin: can create any role, at any facility.
 // Facility Admin: can only create role 'user', tied to their own facility.
-// Creates the account as 'pending_activation' and emails an activation link —
-// the admin never sets or knows the user's password.
+// Creates the account as 'pending_activation' (or 'bypass_pending') with no username
+// or password — the account owner chooses both during activation (email link or
+// first-time login with their email). Admins never set or know credentials.
 router.post('/', requireAuth, requireRole('superadmin', 'facilityadmin'), async (req, res) => {
-  let { name, username, email, role, facilityId, activationMethod } = req.body;
-  if (!name || !username || !email) {
-    return res.status(400).json({ error: 'Name, username and email are required.' });
+  let { name, email, role, facilityId, activationMethod } = req.body;
+  if (!name || !email) {
+    return res.status(400).json({ error: 'Name and email are required.' });
   }
 
   if (req.user.role === 'facilityadmin') {
@@ -86,41 +87,28 @@ router.post('/', requireAuth, requireRole('superadmin', 'facilityadmin'), async 
   // body is never trusted for this — it's silently forced to the normal email flow.
   const useBypass = req.user.role === 'superadmin' && activationMethod === 'bypass';
 
-  const trimmedUsername = String(username).trim();
   const trimmedEmail = String(email).trim();
-  username = trimmedUsername;
   email = trimmedEmail;
 
-  const { rows: userDupes } = await pool.query(
-    `select id, username, email from users
-      where lower(username) = lower($1) or lower(email) = lower($2)`,
-    [trimmedUsername, trimmedEmail]
+  const { rows: emailDupes } = await pool.query(
+    `select id, email from users where lower(email) = lower($1)`,
+    [trimmedEmail]
   );
-  if (userDupes.length) {
-    const byUser = userDupes.find(u => u.username.toLowerCase() === trimmedUsername.toLowerCase());
-    const byEmail = userDupes.find(u => (u.email || '').toLowerCase() === trimmedEmail.toLowerCase());
-    if (byUser && byEmail && byUser.id === byEmail.id) {
-      return res.status(409).json({ error: `Username "${byUser.username}" and email are already in use.` });
-    }
-    if (byUser) {
-      return res.status(409).json({ error: `Username "${byUser.username}" is already taken. Choose a different username.` });
-    }
-    if (byEmail) {
-      return res.status(409).json({ error: `Email "${byEmail.email}" is already registered to another account.` });
-    }
-    return res.status(409).json({ error: 'That username or email is already in use.' });
+  if (emailDupes.length) {
+    return res.status(409).json({ error: `Email "${emailDupes[0].email}" is already registered to another account.` });
   }
 
   const token = randomToken();
   const expires = new Date(Date.now() + ACTIVATION_WINDOW_MS);
   const status = useBypass ? 'bypass_pending' : 'pending_activation';
 
+  // Username is left null until the account owner picks one at activation.
   const { rows } = await pool.query(
     `insert into users
        (name, username, email, password_hash, role, facility_id, status, activation_token, activation_expires,
         created_by, activation_method, enabled_by, enabled_at)
-     values ($1, $2, $3, null, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning *`,
-    [name, username, email, role, facilityId || null, status, token, expires,
+     values ($1, null, $2, null, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning *`,
+    [name, email, role, facilityId || null, status, token, useBypass ? null : expires,
      req.user.id, useBypass ? 'bypass' : 'email',
      useBypass ? req.user.id : null, useBypass ? new Date() : null]
   );
@@ -135,8 +123,8 @@ router.post('/', requireAuth, requireRole('superadmin', 'facilityadmin'), async 
 
 // POST /api/users/:id/enable-bypass — Super Admin only. For a user still pending the normal
 // email-activation flow (typically created by a Facility Admin), this switches them to the
-// bypass path: no email is sent, and the user instead completes first-time password setup
-// the next time they enter their username on the normal login page.
+// bypass path: no email is sent, and the user instead completes first-time username +
+// password setup the next time they enter their email on the normal login page.
 router.post('/:id/enable-bypass', requireAuth, requireRole('superadmin'), async (req, res) => {
   const { rows: existingRows } = await pool.query('select * from users where id = $1', [req.params.id]);
   const target = existingRows[0];
@@ -260,13 +248,13 @@ router.patch('/:id/role', requireAuth, requireRole('superadmin', 'facilityadmin'
   res.json(publicUser(rows[0]));
 });
 
-// PATCH /api/users/:id/details — edit a user's name/username/email. Super Admin can edit
-// anyone; Facility Admin only users at their own facility (which, since Super Admins have no
-// facility_id, naturally excludes Super Admin accounts entirely).
+// PATCH /api/users/:id/details — edit a user's name/email (and username only if already set
+// by the account owner). Super Admin can edit anyone; Facility Admin only users at their
+// own facility. Username remains optional for accounts still awaiting activation.
 router.patch('/:id/details', requireAuth, requireRole('superadmin', 'facilityadmin'), async (req, res) => {
-  const { name, username, email } = req.body;
-  if (!name || !username || !email) {
-    return res.status(400).json({ error: 'Name, username and email are required.' });
+  let { name, username, email } = req.body;
+  if (!name || !email) {
+    return res.status(400).json({ error: 'Name and email are required.' });
   }
 
   const { rows: existingRows } = await pool.query('select * from users where id = $1', [req.params.id]);
@@ -277,30 +265,42 @@ router.patch('/:id/details', requireAuth, requireRole('superadmin', 'facilityadm
     return res.status(403).json({ error: 'You can only manage users at your own facility.' });
   }
 
-  const trimmedUsername = String(username).trim();
   const trimmedEmail = String(email).trim();
-  const { rows: userDupes } = await pool.query(
-    `select id, username, email from users
-      where (lower(username) = lower($1) or lower(email) = lower($2)) and id != $3`,
-    [trimmedUsername, trimmedEmail, req.params.id]
-  );
-  if (userDupes.length) {
-    const byUser = userDupes.find(u => u.username.toLowerCase() === trimmedUsername.toLowerCase());
-    if (byUser) {
-      return res.status(409).json({ error: `Username "${byUser.username}" is already taken. Choose a different username.` });
+  // Only update username if the admin supplies one and the account already has (or is being given) one.
+  // Prefer leaving username null until the owner chooses it at activation.
+  const hasUsernameInput = username != null && String(username).trim() !== '';
+  const trimmedUsername = hasUsernameInput ? String(username).trim() : (target.username || null);
+
+  if (trimmedUsername) {
+    const { rows: userDupes } = await pool.query(
+      `select id, username, email from users
+        where (lower(username) = lower($1) or lower(email) = lower($2)) and id != $3`,
+      [trimmedUsername, trimmedEmail, req.params.id]
+    );
+    if (userDupes.length) {
+      const byUser = userDupes.find(u => u.username && u.username.toLowerCase() === trimmedUsername.toLowerCase());
+      if (byUser) {
+        return res.status(409).json({ error: `Username "${byUser.username}" is already taken. Choose a different username.` });
+      }
+      const byEmail = userDupes.find(u => (u.email || '').toLowerCase() === trimmedEmail.toLowerCase());
+      if (byEmail) {
+        return res.status(409).json({ error: `Email "${byEmail.email}" is already registered to another account.` });
+      }
+      return res.status(409).json({ error: 'That username or email is already in use.' });
     }
-    const byEmail = userDupes.find(u => (u.email || '').toLowerCase() === trimmedEmail.toLowerCase());
-    if (byEmail) {
-      return res.status(409).json({ error: `Email "${byEmail.email}" is already registered to another account.` });
+  } else {
+    const { rows: emailDupes } = await pool.query(
+      `select id, email from users where lower(email) = lower($1) and id != $2`,
+      [trimmedEmail, req.params.id]
+    );
+    if (emailDupes.length) {
+      return res.status(409).json({ error: `Email "${emailDupes[0].email}" is already registered to another account.` });
     }
-    return res.status(409).json({ error: 'That username or email is already in use.' });
   }
-  username = trimmedUsername;
-  email = trimmedEmail;
 
   const { rows } = await pool.query(
     'update users set name = $1, username = $2, email = $3 where id = $4 returning *',
-    [name, username, email, req.params.id]
+    [name, trimmedUsername, trimmedEmail, req.params.id]
   );
   res.json(publicUser(rows[0]));
 });

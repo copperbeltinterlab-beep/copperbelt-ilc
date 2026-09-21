@@ -105,6 +105,7 @@ async function sendActivationEmail({ to, name, token }) {
     html: `${brandHeader()}
       <p>Hello ${name},</p>
       <p>An administrator has created an account for you on the Copperbelt Interlaboratory Comparison Programme system.</p>
+      <p>When you open the link below you will choose your own username and password — your administrator never sets or sees them.</p>
       <p><a href="${link}" style="background:#0d3b30;color:#fff;padding:10px 18px;text-decoration:none;border-radius:6px;">Activate Account</a></p>
       <p>This link expires in 20 minutes. If it expires, ask your administrator to resend the activation email.</p>
       <p style="font-size:12px;color:#888;">If the button doesn't work, copy this link into your browser: ${link}</p>`,

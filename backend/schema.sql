@@ -67,3 +67,14 @@ create table if not exists submission_queries (
 
 create index if not exists idx_submission_queries_round on submission_queries(round_id);
 create index if not exists idx_submission_queries_unread on submission_queries(read_at) where read_at is null;
+
+-- ---------------------------------------------------------------------------
+-- Migrations for existing databases (run once if upgrading):
+-- Username is chosen by the account owner at activation, so it may be null
+-- until then. password_hash is already nullable in production code paths.
+-- ---------------------------------------------------------------------------
+-- alter table users alter column username drop not null;
+-- alter table users alter column password_hash drop not null;
+-- alter table users add column if not exists email text;
+-- alter table users add column if not exists status text;
+-- (other status / activation columns as already used by the API)

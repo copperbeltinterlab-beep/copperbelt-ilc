@@ -384,9 +384,9 @@
 
   <div class="card" id="loginCard">
     <h2 class="section">Sign in</h2>
-    <div class="note">Enter the username and password given to you by your Super Admin or facility's Admin.</div>
-    <label>Username</label>
-    <input type="text" id="loginUsername" placeholder="Username" autocomplete="username">
+    <div class="note">Sign in with the username you chose when you activated your account. If you were enabled without email (bypass), enter your email first to choose a username and password.</div>
+    <label>Username or email</label>
+    <input type="text" id="loginUsername" placeholder="Username or email" autocomplete="username">
     <label>Password</label>
     <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password">
     <button class="primary" id="loginBtn">Continue</button>
@@ -409,6 +409,8 @@
   <div class="card" id="activationCard" style="display:none;">
     <h2 class="section">Activate your account</h2>
     <div class="note" id="activationNote"></div>
+    <label>Choose a username</label>
+    <input type="text" id="activationUsername" placeholder="e.g. jane.mwansa" autocomplete="username">
     <label>Choose a password</label>
     <input type="password" id="activationPassword" placeholder="At least 8 characters" autocomplete="new-password">
     <button class="primary" id="activationSubmitBtn">Activate & sign in</button>
@@ -464,11 +466,9 @@
         <div class="card">
           <label>Full name</label>
           <input type="text" id="newUserName" placeholder="Full name">
-          <label>Username</label>
-          <input type="text" id="newUserUsername" placeholder="e.g. jane.mwansa" autocomplete="off">
           <label>Email</label>
           <input type="email" id="newUserEmail" placeholder="e.g. jane@example.com" autocomplete="off">
-          <div class="note" style="margin:6px 0;">An activation email will be sent to this address. The user sets their own password — admins never see or set it.</div>
+          <div class="note" style="margin:6px 0;">The user chooses their own username and password when they activate (via email link, or by entering this email on the login page if you use bypass). Admins never set or see credentials.</div>
           <label>Role</label>
           <select id="newUserRole">
             <option value="facilityadmin">Facility Admin</option>
@@ -479,8 +479,8 @@
           <select id="newUserFacility"></select>
           <label>Activation method</label>
           <select id="newUserActivationMethod">
-            <option value="email">Send activation email (user clicks a link to set their password)</option>
-            <option value="bypass">Enable directly — no email (user sets password at first login)</option>
+            <option value="email">Send activation email (user chooses username &amp; password via link)</option>
+            <option value="bypass">Enable directly — no email (user enters this email on login to choose username &amp; password)</option>
           </select>
           <button class="primary" id="addUserBtn">Add user</button>
         </div>
@@ -502,11 +502,9 @@
         <div class="card">
           <label>Full name</label>
           <input type="text" id="newFacUserName" placeholder="Full name">
-          <label>Username</label>
-          <input type="text" id="newFacUserUsername" placeholder="e.g. jane.mwansa" autocomplete="off">
           <label>Email</label>
           <input type="email" id="newFacUserEmail" placeholder="e.g. jane@example.com" autocomplete="off">
-          <div class="note" style="margin:6px 0;">An activation email will be sent to this address. The user sets their own password.</div>
+          <div class="note" style="margin:6px 0;">An activation email will be sent to this address. The user chooses their own username and password — you never set or see them.</div>
           <button class="primary" id="addFacUserBtn">Add user to my facility</button>
         </div>
         <div class="card">
@@ -934,7 +932,9 @@ document.getElementById('loginBtn').addEventListener('click', async ()=>{
     const result = await api('/auth/login', { method:'POST', body:{ username, password } });
     if(result.requiresSetup){
       pendingBypassToken = result.setupToken;
-      document.getElementById('activationNote').textContent = `Welcome, ${result.name} (${result.username}). Choose a password to complete your first-time sign-in.`;
+      document.getElementById('activationNote').textContent = `Welcome, ${result.name}. Choose a username and password to complete your first-time sign-in.`;
+      const un = document.getElementById('activationUsername');
+      if(un){ un.value = result.username || ''; }
       showAuthCard('activationCard');
       return;
     }
@@ -1253,7 +1253,7 @@ function renderAccess(){
   const facilityOpts = FACILITIES.map(f=>`<option value="${f.id}">${f.name}</option>`).join('');
   el.innerHTML = filtered.map(u=>`
     <div class="row-item" style="flex-wrap:wrap; gap:8px;">
-      <div><strong>${u.name}</strong><div class="meta">${roleLabel(u.role)}${u.facilityId ? ' · ' + facilityName(u.facilityId) : ''} · ${statusBadge(u)}</div>${auditLine(u) ? `<div class="meta">${auditLine(u)}</div>` : ''}</div>
+      <div><strong>${u.name}</strong><div class="meta">${u.username ? '@' + u.username + ' · ' : (u.email ? u.email + ' · ' : '')}${roleLabel(u.role)}${u.facilityId ? ' · ' + facilityName(u.facilityId) : ''} · ${statusBadge(u)}</div>${auditLine(u) ? `<div class="meta">${auditLine(u)}</div>` : ''}</div>
       <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
         ${u.id===session.userId ? '' : `
         <select class="role-select" data-id="${u.id}" style="width:auto; margin:0;">
@@ -1306,13 +1306,13 @@ function renderAccess(){
       const u = USERS.find(x=>x.id===Number(btn.dataset.id));
       const name = prompt('Full name:', u.name);
       if(name===null) return;
-      const username = prompt('Username:', u.username);
+      const username = prompt('Username (leave blank if not set yet — the user chooses it at activation):', u.username || '');
       if(username===null) return;
       const email = prompt('Email:', u.email);
       if(email===null) return;
-      if(!name.trim() || !username.trim() || !email.trim()){ showToast('All fields are required.'); return; }
+      if(!name.trim() || !email.trim()){ showToast('Name and email are required.'); return; }
       try{
-        const updated = await api(`/users/${u.id}/details`, { method:'PATCH', body:{ name: name.trim(), username: username.trim(), email: email.trim() } });
+        const updated = await api(`/users/${u.id}/details`, { method:'PATCH', body:{ name: name.trim(), username: username.trim() || null, email: email.trim() } });
         Object.assign(u, updated);
         showToast('User details updated.');
         renderAccess();
@@ -1342,7 +1342,7 @@ function renderAccess(){
   el.querySelectorAll('.enable-bypass').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const u = USERS.find(x=>x.id===Number(btn.dataset.id));
-      if(!confirm(`Enable ${u.name} without sending an activation email? They'll set their password the next time they enter their username on the login page.`)) return;
+      if(!confirm(`Enable ${u.name} without sending an activation email? They'll choose a username and password the next time they enter their email on the login page.`)) return;
       try{
         const updated = await api(`/users/${btn.dataset.id}/enable-bypass`, { method:'POST' });
         Object.assign(u, updated);
@@ -1393,20 +1393,20 @@ document.getElementById('newUserRole').addEventListener('change', ()=>{
 
 document.getElementById('addUserBtn').addEventListener('click', async ()=>{
   const name = document.getElementById('newUserName').value.trim();
-  const username = document.getElementById('newUserUsername').value.trim();
   const email = document.getElementById('newUserEmail').value.trim();
   const role = document.getElementById('newUserRole').value;
   const facilityId = role === 'superadmin' ? null : (document.getElementById('newUserFacility').value || null);
   const activationMethod = document.getElementById('newUserActivationMethod').value;
-  if(!name || !username || !email){ showToast('Fill in name, username and email.'); return; }
+  if(!name || !email){ showToast('Fill in name and email.'); return; }
   if(role !== 'superadmin' && !facilityId){ showToast('Select a facility, or add one first.'); return; }
   try{
-    const u = await api('/users', { method:'POST', body:{ name, username, email, role, facilityId, activationMethod } });
+    const u = await api('/users', { method:'POST', body:{ name, email, role, facilityId, activationMethod } });
     USERS.push(u);
     document.getElementById('newUserName').value = '';
-    document.getElementById('newUserUsername').value = '';
     document.getElementById('newUserEmail').value = '';
-    showToast(activationMethod==='bypass' ? 'User added — enabled directly, no email sent.' : 'User added — an activation email has been sent.');
+    showToast(activationMethod==='bypass'
+      ? 'User added — tell them to enter this email on the login page to choose a username and password.'
+      : 'User added — an activation email has been sent so they can choose a username and password.');
     if(role==='facilityadmin') FACILITY_ADMIN_COUNTS = await api('/users/facility-admin-counts');
     renderAccess();
   }catch(e){ showToast(e.message); }
@@ -1427,7 +1427,7 @@ function renderFacUsers(){
   if(mine.length===0){ el.innerHTML = '<div class="empty">No users added yet.</div>'; return; }
   el.innerHTML = mine.map(u=>`
     <div class="row-item" style="flex-wrap:wrap; gap:8px;">
-      <div><strong>${u.name}</strong><div class="meta">${roleLabel(u.role)} · ${statusBadge(u)}</div></div>
+      <div><strong>${u.name}</strong><div class="meta">${u.username ? '@' + u.username + ' · ' : (u.email ? u.email + ' · ' : '')}${roleLabel(u.role)} · ${statusBadge(u)}</div></div>
       <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
         ${u.id===session.userId ? '' : `
         <select class="fac-role-select" data-id="${u.id}" style="width:auto; margin:0;">
@@ -1459,13 +1459,13 @@ function renderFacUsers(){
       const u = USERS.find(x=>x.id===Number(btn.dataset.id));
       const name = prompt('Full name:', u.name);
       if(name===null) return;
-      const username = prompt('Username:', u.username);
+      const username = prompt('Username (leave blank if not set yet — the user chooses it at activation):', u.username || '');
       if(username===null) return;
       const email = prompt('Email:', u.email);
       if(email===null) return;
-      if(!name.trim() || !username.trim() || !email.trim()){ showToast('All fields are required.'); return; }
+      if(!name.trim() || !email.trim()){ showToast('Name and email are required.'); return; }
       try{
-        const updated = await api(`/users/${u.id}/details`, { method:'PATCH', body:{ name: name.trim(), username: username.trim(), email: email.trim() } });
+        const updated = await api(`/users/${u.id}/details`, { method:'PATCH', body:{ name: name.trim(), username: username.trim() || null, email: email.trim() } });
         Object.assign(u, updated);
         showToast('User details updated.');
         renderFacUsers();
@@ -1506,16 +1506,14 @@ function renderFacUsers(){
 }
 document.getElementById('addFacUserBtn').addEventListener('click', async ()=>{
   const name = document.getElementById('newFacUserName').value.trim();
-  const username = document.getElementById('newFacUserUsername').value.trim();
   const email = document.getElementById('newFacUserEmail').value.trim();
-  if(!name || !username || !email){ showToast('Fill in name, username and email.'); return; }
+  if(!name || !email){ showToast('Fill in name and email.'); return; }
   try{
-    const u = await api('/users', { method:'POST', body:{ name, username, email } });
+    const u = await api('/users', { method:'POST', body:{ name, email } });
     USERS.push(u);
     document.getElementById('newFacUserName').value = '';
-    document.getElementById('newFacUserUsername').value = '';
     document.getElementById('newFacUserEmail').value = '';
-    showToast('User added — an activation email has been sent.');
+    showToast('User added — an activation email has been sent so they can choose a username and password.');
     renderFacUsers();
   }catch(e){ showToast(e.message); }
 });
@@ -3480,10 +3478,13 @@ document.getElementById('forgotSubmitBtn').addEventListener('click', async ()=>{
 let pendingBypassToken = null;
 document.getElementById('activationSubmitBtn').addEventListener('click', async ()=>{
   const token = pendingBypassToken || new URLSearchParams(window.location.search).get('activate');
+  const username = (document.getElementById('activationUsername') || {}).value?.trim() || '';
   const password = document.getElementById('activationPassword').value;
+  if(!username || username.length < 3){ showToast('Choose a username (at least 3 characters).'); return; }
+  if(username.includes('@')){ showToast('Username cannot be an email address.'); return; }
   if(!password || password.length < 8){ showToast('Password must be at least 8 characters.'); return; }
   try{
-    const { token: authToken2, user } = await api('/auth/activate', { method:'POST', body:{ token, password } });
+    const { token: authToken2, user } = await api('/auth/activate', { method:'POST', body:{ token, username, password } });
     pendingBypassToken = null;
     authToken = authToken2;
     localStorage.setItem('ilc_token', authToken);
@@ -3512,7 +3513,9 @@ async function checkUrlAuthActions(){
   if(activateToken){
     try{
       const info = await api('/auth/activation-info?token=' + encodeURIComponent(activateToken));
-      document.getElementById('activationNote').textContent = `Welcome, ${info.name} (${info.username}). Choose a password to activate your account.`;
+      document.getElementById('activationNote').textContent = `Welcome, ${info.name}. Choose a username and password to activate your account.`;
+      const un = document.getElementById('activationUsername');
+      if(un) un.value = '';
       showAuthCard('activationCard');
       return true;
     }catch(e){
