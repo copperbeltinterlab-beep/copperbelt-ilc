@@ -12,12 +12,18 @@ function camel(f) {
     facilityType: f.facility_type,
     facilityCode: f.facility_code || null,
     active: f.active,
+    // When false, Facility Admins at this lab cannot create ILC rounds (participant-only).
+    canProvideRounds: f.can_provide_rounds !== false,
   };
 }
 
 async function ensureFacilityCodeSchema() {
   await pool.query(`
     alter table facilities add column if not exists facility_code text;
+  `);
+  // Participant-only labs: Super Admin can turn off round creation for Facility Admins.
+  await pool.query(`
+    alter table facilities add column if not exists can_provide_rounds boolean not null default true;
   `);
   await pool.query(`
     create unique index if not exists facilities_facility_code_uidx
@@ -146,7 +152,7 @@ router.post('/', requireAuth, requireRole('superadmin'), async (req, res) => {
 // PATCH /api/facilities/:id
 router.patch('/:id', requireAuth, requireRole('superadmin'), async (req, res) => {
   await ensureFacilityCodeSchema();
-  const { name, town, facilityType } = req.body;
+  const { name, town, facilityType, canProvideRounds } = req.body;
   const { rows: existingRows } = await pool.query('select * from facilities where id = $1', [req.params.id]);
   const existing = existingRows[0];
   if (!existing) return res.status(404).json({ error: 'Facility not found.' });
@@ -170,12 +176,17 @@ router.patch('/:id', requireAuth, requireRole('superadmin'), async (req, res) =>
     }
   }
 
+  const nextCanProvide = canProvideRounds === undefined
+    ? (existing.can_provide_rounds !== false)
+    : !!canProvideRounds;
+
   const { rows } = await pool.query(
-    `update facilities set name = $1, town = $2, facility_type = $3 where id = $4 returning *`,
+    `update facilities set name = $1, town = $2, facility_type = $3, can_provide_rounds = $4 where id = $5 returning *`,
     [
       nextName,
       town !== undefined ? town : existing.town,
       facilityType || existing.facility_type,
+      nextCanProvide,
       req.params.id,
     ]
   );
@@ -189,6 +200,19 @@ router.patch('/:id/active', requireAuth, requireRole('superadmin'), async (req, 
   const { rows } = await pool.query(
     'update facilities set active = $1 where id = $2 returning *',
     [!!active, req.params.id]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'Facility not found.' });
+  res.json(camel(rows[0]));
+});
+
+// PATCH /api/facilities/:id/can-provide-rounds — Super Admin only.
+// When false, Facility Admins at this facility cannot create ILC rounds (they only participate).
+router.patch('/:id/can-provide-rounds', requireAuth, requireRole('superadmin'), async (req, res) => {
+  await ensureFacilityCodeSchema();
+  const { canProvideRounds } = req.body;
+  const { rows } = await pool.query(
+    'update facilities set can_provide_rounds = $1 where id = $2 returning *',
+    [!!canProvideRounds, req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'Facility not found.' });
   res.json(camel(rows[0]));

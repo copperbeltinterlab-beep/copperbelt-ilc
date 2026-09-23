@@ -997,6 +997,22 @@ const NAV_BY_ROLE = {
   user: [ ['rounds','Active Rounds'], ['submit','Submit Result'], ['myfeedback','My Feedback'], ['notifications','Notifications'] ],
 };
 
+function facilityCanProvideRounds(facilityId){
+  const f = FACILITIES.find(x=>x.id===facilityId);
+  // Default true when unknown so existing labs keep provider UI until data loads.
+  if(!f) return true;
+  return f.canProvideRounds !== false;
+}
+
+function tabsForSession(){
+  if(session.role !== 'facilityadmin') return NAV_BY_ROLE[session.role] || [];
+  // Participant-only facilities: Facility Admin manages users only — no sample prep / provide tools.
+  if(!facilityCanProvideRounds(session.facilityId)){
+    return [ ['facusers','My Facility Users'] ];
+  }
+  return NAV_BY_ROLE.facilityadmin;
+}
+
 function enterApp(){
   document.getElementById('homeScreen').style.display = 'none';
   document.getElementById('publicNav').style.display = 'none';
@@ -1007,7 +1023,8 @@ function enterApp(){
   document.getElementById('whoRole').textContent = roleLabel(session.role);
 
   const navInner = document.getElementById('navInner');
-  const tabs = NAV_BY_ROLE[session.role];
+  // Tabs refined after FACILITIES load in loadAllData for facility admins.
+  const tabs = tabsForSession();
   navInner.innerHTML = tabs.map((t,i)=>`<button class="nav-btn${i===0?' active':''}" data-tab="${t[0]}">${t[1]}</button>`).join('');
   navInner.querySelectorAll('.nav-btn').forEach(btn=>btn.addEventListener('click', ()=>setActiveTab(btn.dataset.tab)));
 
@@ -1018,8 +1035,20 @@ function enterApp(){
   setInterval(refreshCountdownsIfVisible, 30000);
 }
 
+function refreshFacilityAdminNav(){
+  if(!session || session.role !== 'facilityadmin') return;
+  const navInner = document.getElementById('navInner');
+  if(!navInner) return;
+  const tabs = tabsForSession();
+  const current = navInner.querySelector('.nav-btn.active')?.dataset.tab;
+  navInner.innerHTML = tabs.map((t,i)=>`<button class="nav-btn${(current===t[0] || (!current && i===0))?' active':''}" data-tab="${t[0]}">${t[1]}</button>`).join('');
+  navInner.querySelectorAll('.nav-btn').forEach(btn=>btn.addEventListener('click', ()=>setActiveTab(btn.dataset.tab)));
+  if(!tabs.some(t=>t[0]===current)) setActiveTab(tabs[0][0]);
+}
+
 async function loadAllData(){
   FACILITIES = await api('/facilities');
+  refreshFacilityAdminNav();
   ROUNDS = await api('/rounds');
   PACKAGES = await api('/round-packages');
   if(session.role === 'superadmin' || session.role === 'facilityadmin'){
@@ -1153,12 +1182,17 @@ function renderFacilities(){
     const userCount = USERS.filter(u=>u.facilityId===f.id).length;
     const typeLabel = f.facilityType === 'private' ? 'Private' : 'Government';
     const disabledBadge = f.active===false ? `<span class="badge" style="background:#eee;color:#666;">Disabled</span>` : '';
+    const provides = f.canProvideRounds !== false;
+    const provideBadge = provides
+      ? `<span class="badge" style="background:#e3f3ea;color:#0d3b30;">Prepares samples</span>`
+      : `<span class="badge" style="background:#eef2f7;color:#445;">Participant only</span>`;
     return `<div class="row-item" style="flex-wrap:wrap; gap:6px; padding:8px 4px;">
       <div style="min-width:0; flex:1;">
         <strong style="font-size:14px;"><span class="badge role" style="margin-right:6px;">${f.facilityCode || '—'}</span>${f.name}</strong>
-        <div class="meta">${f.town||'—'} · ${typeLabel} · ${userCount} user${userCount===1?'':'s'} ${disabledBadge}</div>
+        <div class="meta">${f.town||'—'} · ${typeLabel} · ${userCount} user${userCount===1?'':'s'} ${disabledBadge} ${provideBadge}</div>
       </div>
-      <div style="display:flex; gap:4px; align-items:center; flex-shrink:0;">
+      <div style="display:flex; gap:4px; align-items:center; flex-shrink:0; flex-wrap:wrap;">
+        <button class="secondary small toggle-can-provide" data-id="${f.id}">${provides ? 'Set participant only' : 'Allow prepare samples'}</button>
         <button class="secondary small edit-facility" data-id="${f.id}">Edit</button>
         <button class="secondary small toggle-facility-active" data-id="${f.id}">${f.active===false ? 'Enable' : 'Disable'}</button>
         <button class="secondary small delete-facility" data-id="${f.id}">Delete</button>
@@ -1191,6 +1225,22 @@ function renderFacilities(){
         const updated = await api(`/facilities/${f.id}/active`, { method:'PATCH', body:{ active: nextActive } });
         Object.assign(f, updated);
         showToast(f.active ? 'Facility enabled.' : 'Facility disabled.');
+        renderFacilities();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+  el.querySelectorAll('.toggle-can-provide').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const f = FACILITIES.find(x=>x.id===Number(btn.dataset.id));
+      const next = f.canProvideRounds === false; // toggle
+      const msg = next
+        ? `Allow ${f.name} Facility Admins to create rounds and prepare samples?`
+        : `Set ${f.name} as participant only? Facility Admins will no longer be able to create rounds (prepare samples).`;
+      if(!confirm(msg)) return;
+      try{
+        const updated = await api(`/facilities/${f.id}/can-provide-rounds`, { method:'PATCH', body:{ canProvideRounds: next } });
+        Object.assign(f, updated);
+        showToast(next ? 'Facility can prepare samples / create rounds.' : 'Facility is participant only — cannot create rounds.');
         renderFacilities();
       }catch(e){ showToast(e.message); }
     });

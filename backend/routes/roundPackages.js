@@ -137,6 +137,22 @@ router.get('/:id/submissions/mine', requireAuth, requireRole('user'), async (req
 // multipart/form-data: testId, year, roundNumber, deadline, sampleIds (JSON array),
 // participationMode, participantFacilityIds (JSON array, if selected), instructionsFile.
 router.post('/', requireAuth, requireRole('facilityadmin'), upload.single('instructionsFile'), async (req, res) => {
+  // Only facilities flagged as sample providers may create rounds.
+  {
+    const { rows: facRows } = await pool.query(
+      'select can_provide_rounds from facilities where id = $1',
+      [req.user.facilityId]
+    );
+    if (!facRows[0]) {
+      return res.status(403).json({ error: 'Your facility account is not linked correctly.' });
+    }
+    if (facRows[0].can_provide_rounds === false) {
+      return res.status(403).json({
+        error: 'This facility is set up as a participant only. Creating rounds (preparing samples) is not enabled. Contact the Super Admin if that should change.',
+      });
+    }
+  }
+
   const { testId, deadline, participationMode } = req.body;
   const year = Number(req.body.year);
   let sampleIds;
