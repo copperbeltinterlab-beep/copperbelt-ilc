@@ -157,6 +157,19 @@ router.post('/', requireAuth, requireRole('facilityadmin'), upload.single('instr
   if (sampleIds.some(s => !s || !String(s).trim())) {
     return res.status(400).json({ error: 'Every sample must have a name.' });
   }
+  // Unique within the round (case-insensitive)
+  {
+    const trimmed = sampleIds.map(s => String(s).trim());
+    const lowered = trimmed.map(s => s.toLowerCase());
+    const seen = new Set();
+    for (let i = 0; i < lowered.length; i++) {
+      if (seen.has(lowered[i])) {
+        return res.status(400).json({ error: `Sample name "${trimmed[i]}" is repeated. Each sample name must be unique.` });
+      }
+      seen.add(lowered[i]);
+    }
+    sampleIds = trimmed;
+  }
 
   const mode = participationMode === 'selected' ? 'selected' : 'all';
   let participantFacilityIds = null;
@@ -307,9 +320,29 @@ router.patch('/:id', requireAuth, requireRole('facilityadmin', 'superadmin'), up
     if (names.some(n => !n || !String(n).trim())) {
       return res.status(400).json({ error: 'Every added sample must have a name.' });
     }
-    const existingCount = (await getSamples(pkg.id)).length;
+    names = names.map(n => String(n).trim());
+    // Unique within the added list
+    {
+      const lowered = names.map(n => n.toLowerCase());
+      const seen = new Set();
+      for (let i = 0; i < lowered.length; i++) {
+        if (seen.has(lowered[i])) {
+          return res.status(400).json({ error: `Sample name "${names[i]}" is repeated. Each sample name must be unique.` });
+        }
+        seen.add(lowered[i]);
+      }
+    }
+    const existingSamples = await getSamples(pkg.id);
+    const existingCount = existingSamples.length;
     if (existingCount + names.length > 5) {
       return res.status(400).json({ error: `This would bring the round to ${existingCount + names.length} samples — the maximum is 5.` });
+    }
+    // Must not collide with samples already on this package
+    const existingLower = new Set(existingSamples.map(s => String(s.sample_id || '').toLowerCase()));
+    for (const name of names) {
+      if (existingLower.has(name.toLowerCase())) {
+        return res.status(400).json({ error: `Sample name "${name}" is already used in this round.` });
+      }
     }
     const effectiveDeadline = updates.deadline || toDateOnly(pkg.deadline);
     for (const name of names) {
@@ -318,7 +351,7 @@ router.patch('/:id', requireAuth, requireRole('facilityadmin', 'superadmin'), up
            (test_id, sample_id, providing_facility_id, deadline, round_package_id,
             participation_mode, participant_facility_ids)
          values ($1,$2,$3,$4,$5,$6,$7)`,
-        [pkg.test_id, String(name).trim(), pkg.providing_facility_id, effectiveDeadline, pkg.id,
+        [pkg.test_id, name, pkg.providing_facility_id, effectiveDeadline, pkg.id,
          mode, participantFacilityIds ? JSON.stringify(participantFacilityIds) : null]
       );
     }

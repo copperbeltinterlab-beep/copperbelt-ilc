@@ -1644,11 +1644,17 @@ function renderProvide(){
     btn.addEventListener('click', async ()=>{
       const p = packageById(btn.dataset.id);
       if(p.samples.length >= 5){ showToast('This round already has the maximum of 5 samples.'); return; }
-      const name = prompt('Name for the new sample:');
-      if(!name || !name.trim()) return;
+      const name = prompt('Name for the new sample (required, must be unique in this round):');
+      if(name===null) return;
+      if(!name.trim()){ showToast('Sample name is required.'); return; }
+      const trimmed = name.trim();
+      if(p.samples.some(s=>String(s.sampleId||'').toLowerCase()===trimmed.toLowerCase())){
+        showToast('Sample name "' + trimmed + '" is already used in this round.');
+        return;
+      }
       try{
         const fd = new FormData();
-        fd.append('addSamples', JSON.stringify([name.trim()]));
+        fd.append('addSamples', JSON.stringify([trimmed]));
         const updated = await patchPackage(p.id, fd);
         Object.assign(p, updated);
         showToast('Sample added.');
@@ -1714,8 +1720,8 @@ function renderSampleNameInputs(){
   const wrap = document.getElementById('newRoundSampleNames');
   const letters = ['A','B','C','D','E'];
   wrap.innerHTML = Array.from({length: count}, (_, i) => `
-    <label>Sample ${letters[i]} name</label>
-    <input type="text" class="mono new-round-sample-name" placeholder="e.g. PT-XXXX-000${i+1}">`
+    <label>Sample ${letters[i]} name *</label>
+    <input type="text" class="mono new-round-sample-name" placeholder="e.g. PT-XXXX-000${i+1}" required autocomplete="off">`
   ).join('');
 }
 function renderParticipantFacilityList(){
@@ -1741,7 +1747,15 @@ document.getElementById('addRoundBtn').addEventListener('click', async ()=>{
   const sampleIds = Array.from(document.querySelectorAll('.new-round-sample-name')).map(i=>i.value.trim());
   if(!deadline){ showToast('Enter a submission deadline.'); return; }
   if(!fileInput.files[0]){ showToast('An instructions file attachment is required.'); return; }
-  if(sampleIds.some(s=>!s)){ showToast('Name every sample slot.'); return; }
+  if(sampleIds.some(s=>!s)){ showToast('Every sample name is required.'); return; }
+  {
+    const lowered = sampleIds.map(s=>s.toLowerCase());
+    const seen = new Set();
+    for(let i=0;i<lowered.length;i++){
+      if(seen.has(lowered[i])){ showToast('Sample names must be unique — "' + sampleIds[i] + '" is repeated.'); return; }
+      seen.add(lowered[i]);
+    }
+  }
 
   const participationMode = document.getElementById('participationSelected').checked ? 'selected' : 'all';
   const participantFacilityIds = Array.from(document.querySelectorAll('.participant-facility-cb:checked')).map(cb=>Number(cb.value));
