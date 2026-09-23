@@ -1181,22 +1181,25 @@ function renderFacilities(){
   el.innerHTML = filtered.map(f=>{
     const userCount = USERS.filter(u=>u.facilityId===f.id).length;
     const typeLabel = f.facilityType === 'private' ? 'Private' : 'Government';
-    const disabledBadge = f.active===false ? `<span class="badge" style="background:#eee;color:#666;">Disabled</span>` : '';
+    const disabledBadge = f.active===false ? ` · <span class="badge" style="background:#eee;color:#666;">Disabled</span>` : '';
     const provides = f.canProvideRounds !== false;
     const provideBadge = provides
       ? `<span class="badge" style="background:#e3f3ea;color:#0d3b30;">Prepares samples</span>`
       : `<span class="badge" style="background:#eef2f7;color:#445;">Participant only</span>`;
-    return `<div class="row-item" style="flex-wrap:wrap; gap:6px; padding:8px 4px;">
-      <div style="min-width:0; flex:1;">
-        <strong style="font-size:14px;"><span class="badge role" style="margin-right:6px;">${f.facilityCode || '—'}</span>${f.name}</strong>
-        <div class="meta">${f.town||'—'} · ${typeLabel} · ${userCount} user${userCount===1?'':'s'} ${disabledBadge} ${provideBadge}</div>
+    return `<div class="row-item" style="display:block; padding:12px 8px; border-bottom:1px solid #eee;">
+      <div style="font-size:14px; line-height:1.35;">
+        <span class="badge role" style="margin-right:8px; vertical-align:middle;">${f.facilityCode || '—'}</span><strong style="vertical-align:middle;">${f.name}</strong>
       </div>
-      <div style="display:flex; gap:4px; align-items:center; flex-shrink:0; flex-wrap:wrap;">
+      <div class="meta" style="margin-top:4px; line-height:1.4;">
+        ${f.town || '—'} · ${typeLabel} · ${userCount} user${userCount===1?'':'s'}${disabledBadge}
+      </div>
+      <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px;">
         <button class="secondary small toggle-can-provide" data-id="${f.id}">${provides ? 'Set participant only' : 'Allow prepare samples'}</button>
         <button class="secondary small edit-facility" data-id="${f.id}">Edit</button>
         <button class="secondary small toggle-facility-active" data-id="${f.id}">${f.active===false ? 'Enable' : 'Disable'}</button>
         <button class="secondary small delete-facility" data-id="${f.id}">Delete</button>
       </div>
+      <div style="margin-top:6px;">${provideBadge}</div>
     </div>`;
   }).join('');
 
