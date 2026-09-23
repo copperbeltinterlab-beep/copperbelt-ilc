@@ -1004,13 +1004,25 @@ function facilityCanProvideRounds(facilityId){
   return f.canProvideRounds !== false;
 }
 
+// Result entry: Facility Users always; Facility Admins only at participant-only facilities.
+function canEnterResults(){
+  if(!session) return false;
+  if(session.role === 'user') return true;
+  if(session.role === 'facilityadmin') return !facilityCanProvideRounds(session.facilityId);
+  return false;
+}
+
 function tabsForSession(){
   if(session.role !== 'facilityadmin') return NAV_BY_ROLE[session.role] || [];
-  // Participant-only facilities: Facility Admin manages users only — no sample prep / provide tools.
-  if(!facilityCanProvideRounds(session.facilityId)){
-    return [ ['facusers','My Facility Users'] ];
+  // Sample-provider Facility Admin: prepare rounds / feedback — no result entry.
+  if(facilityCanProvideRounds(session.facilityId)){
+    return NAV_BY_ROLE.facilityadmin;
   }
-  return NAV_BY_ROLE.facilityadmin;
+  // Participant-only Facility Admin: manage users + enter results like a Facility User.
+  return [
+    ['facusers','My Facility Users'],
+    ...NAV_BY_ROLE.user,
+  ];
 }
 
 function enterApp(){
@@ -1057,12 +1069,12 @@ async function loadAllData(){
   if(session.role === 'superadmin'){
     FACILITY_ADMIN_COUNTS = await api('/users/facility-admin-counts');
   }
-  if(session.role === 'user'){
+  if(canEnterResults()){
     MY_SUBMISSION_STATUS = await api('/rounds/mine/status');
   }
   renderCurrentTab();
-  if(session.role === 'facilityadmin') updateQueriesBadge();
-  if(session.role === 'user') updateNotificationsBadge();
+  if(session.role === 'facilityadmin' && facilityCanProvideRounds(session.facilityId)) updateQueriesBadge();
+  if(canEnterResults()) updateNotificationsBadge();
 }
 
 function setActiveTab(tab){
@@ -2455,7 +2467,7 @@ document.querySelectorAll('.notif-filter').forEach(btn=>{
 });
 
 async function updateNotificationsBadge(){
-  if(!session || session.role !== 'user') return;
+  if(!session || !canEnterResults()) return;
   try{
     const items = await api('/rounds/queries/sent');
     const seen = getSeenQueryResponses();

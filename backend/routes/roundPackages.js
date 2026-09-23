@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const pool = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requireRole, requireResultEntry } = require('../middleware/auth');
 const { isEligibleParticipant } = require('../participation');
 const { computeStatus, toDateOnly } = require('../roundPackageStatus');
 const { buildConsensusReport } = require('../consensus');
@@ -76,10 +76,9 @@ async function getSamples(packageId) {
   return rows;
 }
 
-// GET /api/round-packages — everyone signed in sees every package EXCEPT Facility Users,
-// who only see packages that are (a) still active and (b) open to their facility (Select
-// All / Select Individual participation). This is enforced here, not just hidden in the UI —
-// a non-participant or a closed round is never even present in the response for role 'user'.
+// GET /api/round-packages — Super Admin and sample-provider Facility Admins see all packages.
+// Facility Users and participant-only Facility Admins only see packages that are (a) still
+// active and (b) open to their facility. Enforced here, not only in the UI.
 router.get('/', requireAuth, async (req, res) => {
   const { rows: packages } = await pool.query('select * from round_packages order by created_at desc');
   const { rows: allSamples } = await pool.query('select * from rounds where round_package_id is not null order by id');
@@ -87,7 +86,15 @@ router.get('/', requireAuth, async (req, res) => {
   allSamples.forEach(s => { (byPackage[s.round_package_id] = byPackage[s.round_package_id] || []).push(s); });
 
   let visible = packages;
-  if (req.user.role === 'user') {
+  let asParticipant = req.user.role === 'user';
+  if (req.user.role === 'facilityadmin' && req.user.facilityId) {
+    const { rows: facRows } = await pool.query(
+      'select can_provide_rounds from facilities where id = $1',
+      [req.user.facilityId]
+    );
+    if (facRows[0] && facRows[0].can_provide_rounds === false) asParticipant = true;
+  }
+  if (asParticipant) {
     visible = packages.filter(p => computeStatus(p) === 'active' && isEligibleParticipant(p, req.user.facilityId));
   }
   res.json(visible.map(p => camel(p, byPackage[p.id])));
@@ -119,7 +126,7 @@ function camelSubmission(s) {
 // EVERY sample in this package, in one call. Powers the multi-sample entry screen: enter
 // Sample A, move straight to Sample B/C/D without returning to the round list, per-sample
 // data kept fully independent.
-router.get('/:id/submissions/mine', requireAuth, requireRole('user'), async (req, res) => {
+router.get('/:id/submissions/mine', requireAuth, requireResultEntry(), async (req, res) => {
   const samples = await getSamples(req.params.id);
   const sampleIds = samples.map(s => s.id);
   if (sampleIds.length === 0) return res.json({});

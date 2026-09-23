@@ -5,7 +5,7 @@ const { getTestName, getTestDef, NOT_PERFORMED_REASONS } = require('../testDefin
 const { sendFeedbackReleasedEmail, sendFollowUpQueryEmail, sendQueryResponseEmail } = require('../email');
 const { isEligibleParticipant } = require('../participation');
 const { computeStatus, toDateOnly } = require('../roundPackageStatus');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requireRole, requireResultEntry } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -81,7 +81,7 @@ router.get('/:roundId/submissions', requireAuth, requireRole('facilityadmin'), a
 });
 
 // GET /api/rounds/:roundId/submissions/mine — a Facility User's own draft/submission for a round
-router.get('/:roundId/submissions/mine', requireAuth, requireRole('user'), async (req, res) => {
+router.get('/:roundId/submissions/mine', requireAuth, requireResultEntry(), async (req, res) => {
   const { rows } = await pool.query(
     'select * from submissions where round_id = $1 and facility_id = $2',
     [req.params.roundId, req.user.facilityId]
@@ -90,8 +90,8 @@ router.get('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
 });
 
 // PUT /api/rounds/:roundId/submissions/mine — save draft or submit final result.
-// Facility Users only — this is laboratory result entry, not an admin function.
-router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async (req, res) => {
+// Facility Users, or Facility Admins at participant-only facilities.
+router.put('/:roundId/submissions/mine', requireAuth, requireResultEntry(), async (req, res) => {
   await ensureDualControlSchema();
   const round = await getRound(req.params.roundId);
   if (!round) return res.status(404).json({ error: 'Round not found.' });
@@ -302,7 +302,7 @@ router.put('/:roundId/submissions/mine', requireAuth, requireRole('user'), async
   }
 });
 
-router.get('/mine/status', requireAuth, requireRole('user'), async (req, res) => {
+router.get('/mine/status', requireAuth, requireResultEntry(), async (req, res) => {
   const { rows } = await pool.query(
     'select round_id, status from submissions where facility_id = $1',
     [req.user.facilityId]
@@ -315,7 +315,7 @@ router.get('/mine/status', requireAuth, requireRole('user'), async (req, res) =>
 // GET /api/rounds/mine/feedback — a Facility User's own submitted results + feedback, across all rounds.
 // Only shows feedback that has been fully authorized (dual sign-off complete) — a verified-only
 // result is still under internal review and stays hidden from the submitting facility until then.
-router.get('/mine/feedback', requireAuth, requireRole('user'), async (req, res) => {
+router.get('/mine/feedback', requireAuth, requireResultEntry(), async (req, res) => {
   // Join rounds + packages so the client can group all samples of one ILC package into a
   // single performance report even after the package is closed (users only see *active*
   // packages on GET /round-packages, which previously broke grouping).
