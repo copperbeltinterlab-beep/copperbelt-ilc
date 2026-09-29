@@ -489,6 +489,7 @@
         </div>
         <div class="card">
           <h3 class="subsection" style="margin-top:0;">All users</h3>
+          <div id="usersRoleSummary" class="note" style="margin:0 0 12px;"></div>
           <label>Filter by facility</label>
           <select id="usersFacilityFilter">
             <option value="">All facilities</option>
@@ -576,10 +577,11 @@
       </div>
       <div class="card" id="consensusPanel" style="display:none;">
         <h3 class="subsection" style="margin-top:0;">Automatic consensus</h3>
-        <div class="note">Calculates group statistics from every submitted result in this round (minimum 3 participating facilities needed per test) and can pre-fill each result's Verify step. A different Facility Admin must still Authorize & Release each one.</div>
+        <div class="note">Calculates group statistics from every submitted result (minimum 3 participating facilities needed per test) and pre-fills the Verify step. A different Facility Admin must still Authorize &amp; Release. Use <strong>Apply to all samples</strong> when this round has several samples (e.g. FBC1–FBC4) so every sample is verified in one action.</div>
         <div class="btn-row">
           <button class="secondary" id="calcConsensusBtn">Calculate consensus</button>
-          <button class="primary" id="applyConsensusBtn">Apply to all as Verified</button>
+          <button class="primary" id="applyConsensusBtn">Apply to this sample as Verified</button>
+          <button class="primary gold" id="applyConsensusAllSamplesBtn">Apply to all samples as Verified</button>
         </div>
         <div id="consensusStats" style="margin-top:12px;"></div>
         <div id="consensusNotSubmitted" style="margin-top:8px;"></div>
@@ -1339,6 +1341,17 @@ function renderAccess(){
   const el = document.getElementById('usersList');
   const filterValue = document.getElementById('usersFacilityFilter').value;
   const filtered = filterValue ? USERS.filter(u=>String(u.facilityId)===filterValue) : USERS;
+  // Role totals (always across the full user list; filter only affects the table below)
+  const nSuper = USERS.filter(u=>u.role==='superadmin').length;
+  const nFacAdmin = USERS.filter(u=>u.role==='facilityadmin').length;
+  const nFacUser = USERS.filter(u=>u.role==='user').length;
+  const summaryEl = document.getElementById('usersRoleSummary');
+  if(summaryEl){
+    const scope = filterValue
+      ? `Showing ${filtered.length} user(s) for this facility · `
+      : '';
+    summaryEl.innerHTML = `${scope}<strong>Total users: ${USERS.length}</strong> — Super Admins: <strong>${nSuper}</strong> · Facility Admins: <strong>${nFacAdmin}</strong> · Facility Users: <strong>${nFacUser}</strong>`;
+  }
   if(filtered.length===0){ el.innerHTML = '<div class="empty">No users match this filter.</div>'; return; }
   const facilityOpts = FACILITIES.map(f=>`<option value="${f.id}">${f.name}</option>`).join('');
   el.innerHTML = filtered.map(u=>`
@@ -2054,6 +2067,27 @@ async function renderFeedbackAdmin(){
   updateBulkPanel();
   renderFeedbackSubmissions(sel.value);
 }
+
+document.getElementById('applyConsensusAllSamplesBtn').addEventListener('click', async ()=>{
+  const roundId = document.getElementById('feedbackRoundSelect').value;
+  const pkg = packageForRoundId(roundId);
+  if(!pkg){
+    showToast('This sample is not part of a multi-sample package. Use “Apply to this sample as Verified” instead.');
+    return;
+  }
+  if(!confirm(`Apply consensus and mark as Verified for EVERY sample in ${pkg.label} (${pkg.samples.length} sample(s)) for all submitted facilities?\n\nThis overwrites any existing unauthorized feedback. A different Facility Admin must still Authorize & Release.`)) return;
+  try{
+    const res = await api(`/round-packages/${pkg.id}/consensus/apply`, { method:'POST' });
+    showToast(res.message || 'Consensus applied to all samples.');
+    if(res.fieldStatsBySample){
+      // show stats for the currently selected sample if present
+      const stats = res.fieldStatsBySample[String(roundId)] || res.fieldStatsBySample[roundId];
+      if(stats) renderConsensusStats(stats, res.notSubmittedBySample && (res.notSubmittedBySample[String(roundId)] || res.notSubmittedBySample[roundId]));
+    }
+    renderFeedbackAdmin();
+  }catch(e){ showToast(e.message); }
+});
+
 document.getElementById('authorizeAllBtn').addEventListener('click', async ()=>{
   const pkgId = document.getElementById('authorizeAllBtn').dataset.packageId;
   if(!pkgId) return;
@@ -2791,7 +2825,14 @@ function updatePanelStatus(pkg, sample, container){
 }
 function wireSamplePanel(pkg, sample, container){
   const mine = MY_PACKAGE_SUBMISSIONS[sample.id];
-  const locked = mine && (mine.status === 'submitted' || mine.status === 'pending_verification');
+  const sessionUserId = session && (session.userId || session.id);
+  const isAnalyst = mine && mine.testedByUserId && sessionUserId && String(mine.testedByUserId)===String(sessionUserId);
+  // Fully locked only after final verify. While pending, the analyst is locked out;
+  // a different user (verifier) may edit and then verify.
+  const locked = mine && (
+    mine.status === 'submitted'
+    || (mine.status === 'pending_verification' && isAnalyst)
+  );
   wireNotPerformedCheckboxes(container);
   if(pkg.testId === 'bacterialgrowth') wireBacterialGrowthDependencies(container);
   container.querySelector('.p-accepted').addEventListener('change', ()=>{ togglePanelRejection(container); updatePanelStatus(pkg, sample, container); });
@@ -2835,9 +2876,20 @@ async function renderSubmit(){
   document.getElementById('sharedReceivedBy').value = anyExisting?.receivedBy || '';
   document.getElementById('sharedSampleCondition').value = anyExisting?.sampleCondition || '';
   document.getElementById('sharedMethodUsed').value = anyExisting?.methodUsed || '';
-  const allLocked = pkg.samples.every(s=>{ const st=MY_PACKAGE_SUBMISSIONS[s.id]?.status; return st==='submitted'||st==='pending_verification'; });
+  const sessionUserId = session && (session.userId || session.id);
+  const allFullySubmitted = pkg.samples.every(s=>MY_PACKAGE_SUBMISSIONS[s.id]?.status==='submitted');
+  // Lock shared receipt only when everything is final, or when this user is the analyst on all pending samples
+  const lockShared = allFullySubmitted || pkg.samples.every(s=>{
+    const m = MY_PACKAGE_SUBMISSIONS[s.id];
+    if(!m) return false;
+    if(m.status==='submitted') return true;
+    if(m.status==='pending_verification'){
+      return m.testedByUserId && sessionUserId && String(m.testedByUserId)===String(sessionUserId);
+    }
+    return false;
+  });
   ['sharedDateReceived','sharedReceivedBy','sharedSampleCondition','sharedMethodUsed'].forEach(id=>{
-    document.getElementById(id).disabled = allLocked;
+    document.getElementById(id).disabled = lockShared;
   });
 
   const panelsWrap = document.getElementById('samplePanelsWrap');
@@ -2952,7 +3004,11 @@ async function saveAllSamples(pkg, action){
     const container = panelsWrap.querySelector(`.sample-panel-body[data-round="${sample.id}"]`);
     if(!container) return;
     if(action === 'verify'){
-      toSubmit.push({ sample, payload: { action: 'verify' } });
+      // Collect current form values so the verifier can correct results before locking
+      const { errors, payload } = collectSamplePayload(pkg, sample, container, true);
+      payload.action = 'verify';
+      allErrors.push(...errors);
+      toSubmit.push({ sample, payload });
       return;
     }
     const finalize = action === 'submit_for_verification';
@@ -2962,7 +3018,7 @@ async function saveAllSamples(pkg, action){
     toSubmit.push({ sample, payload });
   });
 
-  if(action === 'submit_for_verification' && allErrors.length){
+  if((action === 'submit_for_verification' || action === 'verify') && allErrors.length){
     showToast(allErrors[0] + (allErrors.length>1 ? ` (+${allErrors.length-1} more issue(s) — check every sample)` : ''));
     return;
   }
@@ -2977,7 +3033,7 @@ async function saveAllSamples(pkg, action){
   const failMessages = [];
   for(const { sample, payload } of toSubmit){
     try{
-      const body = action === 'verify' ? { action: 'verify' } : payload;
+      const body = payload; // includes action + any verifier corrections
       const updated = await api(`/rounds/${sample.id}/submissions/mine`, { method:'PUT', body });
       MY_PACKAGE_SUBMISSIONS[sample.id] = updated;
       successCount++;

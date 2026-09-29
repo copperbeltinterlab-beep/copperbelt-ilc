@@ -385,6 +385,88 @@ router.patch('/:id', requireAuth, requireRole('facilityadmin', 'superadmin'), up
   res.json(camel(freshPkg, samples));
 });
 
+// POST /api/round-packages/:id/consensus/apply — apply consensus + Verify for every sample
+// in the package (all submitted facilities). Same dual-control rule: a different admin must
+// still Authorize & Release afterward.
+router.post('/:id/consensus/apply', requireAuth, requireRole('facilityadmin', 'superadmin'), async (req, res) => {
+  const pkg = await getPackage(req.params.id);
+  if (!pkg) return res.status(404).json({ error: 'Round not found.' });
+  if (req.user.role === 'facilityadmin' && pkg.providing_facility_id !== req.user.facilityId) {
+    return res.status(403).json({ error: 'This round belongs to another facility.' });
+  }
+
+  const children = await getSamples(pkg.id);
+  let verifiedCount = 0;
+  let skipped = 0;
+  const fieldStatsBySample = {};
+  const notSubmittedBySample = {};
+  const errors = [];
+
+  for (const round of children) {
+    const { rows: subRows } = await pool.query(
+      `select * from submissions where round_id = $1 and status = 'submitted'`,
+      [round.id]
+    );
+    const submissions = subRows.map(s => ({
+      id: s.id,
+      facilityId: s.facility_id,
+      result: s.result,
+      sampleAcceptability: s.sample_acceptability,
+      status: s.status,
+      feedback: s.feedback,
+    }));
+    // Also map via camel if available — buildConsensusReport expects certain fields
+    const report = buildConsensusReport(round.test_id, submissions.map(s => ({
+      id: s.id,
+      facilityId: s.facilityId,
+      result: s.result,
+      sampleAcceptability: s.sampleAcceptability,
+    })));
+    if (report.error) {
+      errors.push(`Sample ${round.sample_id}: ${report.error}`);
+      skipped += submissions.length;
+      continue;
+    }
+    fieldStatsBySample[round.id] = report.fieldStats;
+
+    const { rows: facilityRows } = await pool.query(
+      `select id, name from facilities where active is not false order by name`
+    );
+    // Participation filter is best-effort; notSubmitted is informational
+    const submittedFacilityIds = new Set(submissions.map(s => s.facilityId));
+    notSubmittedBySample[round.id] = facilityRows
+      .filter(f => !submittedFacilityIds.has(f.id))
+      .map(f => ({ facilityId: f.id, facilityName: f.name }));
+
+    for (const entry of report.perSubmission) {
+      const feedback = {
+        status: entry.overall,
+        comment: entry.comment,
+        fields: entry.fields || {},
+        fieldStats: report.fieldStats,
+        verifiedBy: req.user.name,
+        verifiedAt: new Date().toISOString(),
+        authorizedBy: null,
+        authorizedAt: null,
+        released: false,
+      };
+      await pool.query('update submissions set feedback = $1 where id = $2', [feedback, entry.submissionId]);
+      verifiedCount++;
+    }
+  }
+
+  const parts = [`Consensus applied as Verified for ${verifiedCount} submission(s) across ${children.length} sample(s).`];
+  if (errors.length) parts.push(`Notes: ${errors.join('; ')}`);
+  parts.push('A different Facility Admin must still Authorize & Release.');
+  res.json({
+    message: parts.join(' '),
+    verifiedCount,
+    sampleCount: children.length,
+    fieldStatsBySample,
+    notSubmittedBySample,
+  });
+});
+
 // POST /api/round-packages/:id/authorize-all — authorize & release every eligible submission
 // across every sample in this package in one action, instead of one sample/facility at a
 // time. "Eligible" preserves the existing dual sign-off rule: the submission must already be

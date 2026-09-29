@@ -124,7 +124,7 @@ router.put('/:roundId/submissions/mine', requireAuth, requireResultEntry(), asyn
   // finalize:true is treated as submit_for_verification for backward compatibility.
   const action = (req.body.action || (req.body.finalize ? 'submit_for_verification' : 'draft')).trim();
 
-  // Verifier step: second user locks the result. Analyst cannot verify their own entry.
+  // Verifier step: second user may correct results, then locks them. Analyst cannot verify own entry.
   if (action === 'verify') {
     if (!existing || existing.status !== 'pending_verification') {
       return res.status(400).json({ error: 'This sample is not awaiting verification.' });
@@ -134,6 +134,68 @@ router.put('/:roundId/submissions/mine', requireAuth, requireResultEntry(), asyn
         error: 'You entered these results as the analyst. A different user at your facility must log in and verify them.',
       });
     }
+    // Optional corrections from the verifier (same shape as a normal save)
+    const {
+      dateReceived, methodUsed, sampleCondition, receivedBy,
+      sampleAcceptability, sampleRejectionReason, result,
+    } = req.body;
+    const hasCorrection = result !== undefined
+      || dateReceived !== undefined
+      || methodUsed !== undefined
+      || sampleCondition !== undefined
+      || receivedBy !== undefined
+      || sampleAcceptability !== undefined;
+
+    if (hasCorrection) {
+      let normalizedResult = sampleAcceptability === 'rejected' ? {} : (result || existing.result || {});
+      let hasAnyRealValue = false;
+      if (sampleAcceptability !== 'rejected' && normalizedResult && typeof normalizedResult === 'object') {
+        for (const key of Object.keys(normalizedResult)) {
+          const v = normalizedResult[key];
+          if (!v || typeof v !== 'object') continue;
+          if (v.notPerformed || v.notApplicable) continue;
+          if (v.value !== null && v.value !== undefined && v.value !== '') {
+            hasAnyRealValue = true;
+            break;
+          }
+        }
+      }
+      const derivedResultStatus =
+        (sampleAcceptability === 'rejected' || (sampleAcceptability === undefined && existing.sample_acceptability === 'rejected') || !hasAnyRealValue)
+          ? 'not_performed' : 'reported';
+      const { rows } = await pool.query(
+        `update submissions set
+           date_received = coalesce($1, date_received),
+           method_used = coalesce($2, method_used),
+           sample_condition = coalesce($3, sample_condition),
+           received_by = coalesce($4, received_by),
+           sample_acceptability = coalesce($5, sample_acceptability),
+           sample_rejection_reason = coalesce($6, sample_rejection_reason),
+           result_status = $7,
+           result = $8,
+           status = 'submitted',
+           personnel_verifying = $9,
+           verified_by_user_id = $10,
+           submitted_at = now(),
+           saved_at = now()
+         where id = $11 returning *`,
+        [
+          dateReceived || null,
+          methodUsed || null,
+          sampleCondition || null,
+          receivedBy || null,
+          sampleAcceptability || null,
+          sampleRejectionReason || null,
+          derivedResultStatus,
+          normalizedResult,
+          req.user.name,
+          req.user.id,
+          existing.id,
+        ]
+      );
+      return res.json(camel(rows[0]));
+    }
+
     const { rows } = await pool.query(
       `update submissions set
          status = 'submitted',
@@ -147,11 +209,15 @@ router.put('/:roundId/submissions/mine', requireAuth, requireResultEntry(), asyn
     return res.json(camel(rows[0]));
   }
 
-  // Pending verification: freeze edits until verified (or only the original analyst could re-open — we freeze).
+  // Pending verification: the original analyst cannot edit; a different user (verifier) may correct.
   if (existing && existing.status === 'pending_verification' && action !== 'verify') {
-    return res.status(403).json({
-      error: 'Results are awaiting verification by another user and cannot be edited. Ask a colleague to verify, or contact your Facility Admin.',
-    });
+    const isAnalyst = existing.tested_by_user_id && Number(existing.tested_by_user_id) === Number(req.user.id);
+    if (isAnalyst) {
+      return res.status(403).json({
+        error: 'Results are awaiting verification. You entered them as the analyst — a colleague must log in to edit or verify.',
+      });
+    }
+    // Non-analyst: allow saving corrections while still pending_verification (action treated as draft-like update)
   }
 
   const {
@@ -237,6 +303,14 @@ router.put('/:roundId/submissions/mine', requireAuth, requireResultEntry(), asyn
     status = 'pending_verification';
     personnelTesting = req.user.name;
     testedByUserId = req.user.id;
+    personnelVerifying = null;
+    verifiedByUserId = null;
+    submittedAt = null;
+  } else if (existing && existing.status === 'pending_verification') {
+    // Verifier corrections before final lock — keep awaiting verification
+    status = 'pending_verification';
+    personnelTesting = existing.personnel_testing;
+    testedByUserId = existing.tested_by_user_id;
     personnelVerifying = null;
     verifiedByUserId = null;
     submittedAt = null;
