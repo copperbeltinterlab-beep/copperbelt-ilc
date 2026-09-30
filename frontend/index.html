@@ -490,6 +490,12 @@
         <div class="card">
           <h3 class="subsection" style="margin-top:0;">All users</h3>
           <div id="usersRoleSummary" class="note" style="margin:0 0 12px;"></div>
+          <div id="usersStatusFilterRow" style="display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px;">
+            <button type="button" class="secondary small user-status-filter active" data-filter="all">All</button>
+            <button type="button" class="secondary small user-status-filter" data-filter="active">Active</button>
+            <button type="button" class="secondary small user-status-filter" data-filter="disabled">Disabled</button>
+            <button type="button" class="secondary small user-status-filter" data-filter="pending">Pending activation</button>
+          </div>
           <label>Filter by facility</label>
           <select id="usersFacilityFilter">
             <option value="">All facilities</option>
@@ -1303,6 +1309,8 @@ document.getElementById('addFacilityBtn').addEventListener('click', async ()=>{
 
 /* ---------------- SUPER ADMIN: Users & Access ---------------- */
 let FACILITY_ADMIN_COUNTS = {};
+let userStatusFilter = 'all'; // all | active | disabled | pending
+
 function populateFacilitySelects(){
   const opts = FACILITIES.map(f=>`<option value="${f.id}">${f.name}</option>`).join('');
   const sel = document.getElementById('newUserFacility');
@@ -1327,6 +1335,14 @@ function updateFacilityAdminOptionState(){
 }
 document.getElementById('newUserFacility').addEventListener('change', updateFacilityAdminOptionState);
 document.getElementById('usersFacilityFilter').addEventListener('change', renderAccess);
+document.querySelectorAll('.user-status-filter').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    userStatusFilter = btn.dataset.filter || 'all';
+    document.querySelectorAll('.user-status-filter').forEach(b=>b.classList.toggle('active', b===btn));
+    renderAccess();
+  });
+});
+
 
 function auditLine(u){
   const parts = [];
@@ -1336,21 +1352,39 @@ function auditLine(u){
   if(u.setupCompletedAt) parts.push(`password set ${new Date(u.setupCompletedAt).toLocaleDateString()}`);
   return parts.join(' · ');
 }
+function userMatchesStatusFilter(u, statusFilter){
+  const st = u.status || '';
+  const isPending = ['pending_activation','activation_expired','bypass_pending'].includes(st);
+  const isDisabled = u.active === false || st === 'inactive' || st === 'suspended';
+  if(statusFilter === 'all') return true;
+  if(statusFilter === 'pending') return isPending;
+  if(statusFilter === 'disabled') return isDisabled && !isPending;
+  if(statusFilter === 'active') return !isDisabled && !isPending;
+  return true;
+}
 function renderAccess(){
   populateFacilitySelects();
   const el = document.getElementById('usersList');
   const filterValue = document.getElementById('usersFacilityFilter').value;
-  const filtered = filterValue ? USERS.filter(u=>String(u.facilityId)===filterValue) : USERS;
-  // Role totals (always across the full user list; filter only affects the table below)
+  let filtered = filterValue ? USERS.filter(u=>String(u.facilityId)===filterValue) : USERS.slice();
+  filtered = filtered.filter(u=>userMatchesStatusFilter(u, userStatusFilter));
+  // Role totals (always across the full user list; status/facility filters only affect the table)
   const nSuper = USERS.filter(u=>u.role==='superadmin').length;
   const nFacAdmin = USERS.filter(u=>u.role==='facilityadmin').length;
   const nFacUser = USERS.filter(u=>u.role==='user').length;
+  const nActive = USERS.filter(u=>userMatchesStatusFilter(u,'active')).length;
+  const nDisabled = USERS.filter(u=>userMatchesStatusFilter(u,'disabled')).length;
+  const nPending = USERS.filter(u=>userMatchesStatusFilter(u,'pending')).length;
   const summaryEl = document.getElementById('usersRoleSummary');
   if(summaryEl){
-    const scope = filterValue
-      ? `Showing ${filtered.length} user(s) for this facility · `
+    const scopeBits = [];
+    if(filterValue) scopeBits.push('facility filter');
+    if(userStatusFilter !== 'all') scopeBits.push(userStatusFilter);
+    const scope = scopeBits.length
+      ? `Showing ${filtered.length} user(s) (${scopeBits.join(' · ')}) · `
       : '';
-    summaryEl.innerHTML = `${scope}<strong>Total users: ${USERS.length}</strong> — Super Admins: <strong>${nSuper}</strong> · Facility Admins: <strong>${nFacAdmin}</strong> · Facility Users: <strong>${nFacUser}</strong>`;
+    summaryEl.innerHTML = `${scope}<strong>Total users: ${USERS.length}</strong> — Super Admins: <strong>${nSuper}</strong> · Facility Admins: <strong>${nFacAdmin}</strong> · Facility Users: <strong>${nFacUser}</strong><br>
+      <span class="meta">Active: ${nActive} · Disabled: ${nDisabled} · Pending activation: ${nPending}</span>`;
   }
   if(filtered.length===0){ el.innerHTML = '<div class="empty">No users match this filter.</div>'; return; }
   const facilityOpts = FACILITIES.map(f=>`<option value="${f.id}">${f.name}</option>`).join('');
