@@ -295,6 +295,143 @@ async function ensureRegistrationSchema() {
   await pool.query(`
     create index if not exists idx_facility_registrations_status on facility_registrations(status);
   `);
+  // Concurrent-safe uniqueness: same email cannot hold two pending/approved registrations.
+  try {
+    await pool.query(`
+      create unique index if not exists facility_registrations_email_active_uidx
+        on facility_registrations (lower(trim(lab_email)))
+        where status in ('pending', 'approved');
+    `);
+  } catch (e) {
+    console.warn('Could not create facility_registrations email unique index (existing duplicates?):', e.message);
+  }
+  // Exact normalized name uniqueness among pending/approved registrations
+  try {
+    await pool.query(`
+      create unique index if not exists facility_registrations_name_active_uidx
+        on facility_registrations (lower(trim(name)))
+        where status in ('pending', 'approved');
+    `);
+  } catch (e) {
+    console.warn('Could not create facility_registrations name unique index (existing duplicates?):', e.message);
+  }
+}
+
+/** Lowercase, collapse punctuation/spaces for comparison. */
+function normalizeFacilityName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function ensureFacilityNameUniqueIndex() {
+  try {
+    await pool.query(`
+      create unique index if not exists facilities_name_normalized_uidx
+        on facilities (lower(trim(name)));
+    `);
+  } catch (e) {
+    // Pre-existing duplicate names block the index — app-level checks still apply.
+    console.warn('Could not create facilities name unique index (existing duplicates?):', e.message);
+  }
+}
+
+/**
+ * Facilities / pending registrations whose names contain the query (case-insensitive).
+ * Progressive: longer query → fewer hits. Not a hard block by itself.
+ */
+async function searchFacilityNameMatches(query, limit = 12) {
+  const q = normalizeFacilityName(query);
+  if (q.length < 1) return [];
+  const like = `%${q.replace(/\s+/g, '%')}%`;
+  const prefix = `${q}%`;
+  const { rows: facRows } = await pool.query(
+    `select id, name, town, facility_code, facility_type, active, 'registered' as source
+       from facilities
+      where lower(trim(name)) like $1
+         or lower(regexp_replace(name, '[^a-zA-Z0-9]+', ' ', 'g')) like $1
+      order by
+        case when lower(trim(name)) = $2 then 0
+             when lower(trim(name)) like $3 then 1
+             else 2 end,
+        name
+      limit $4`,
+    [like, q, prefix, limit]
+  );
+  const { rows: regRows } = await pool.query(
+    `select id, name, town, null as facility_code, facility_type, true as active, 'pending_registration' as source
+       from facility_registrations
+      where status = 'pending'
+        and (lower(trim(name)) like $1
+             or lower(regexp_replace(name, '[^a-zA-Z0-9]+', ' ', 'g')) like $1)
+      order by name
+      limit $2`,
+    [like, limit]
+  );
+  // Prefer registered over pending; dedupe by normalized name
+  const seen = new Set();
+  const out = [];
+  for (const r of [...facRows, ...regRows]) {
+    const key = normalizeFacilityName(r.name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      id: r.id,
+      name: r.name,
+      town: r.town || null,
+      facilityCode: r.facility_code || null,
+      facilityType: r.facility_type || null,
+      active: r.active !== false,
+      source: r.source,
+      exact: key === q,
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+async function findEmailConflict(labEmail) {
+  const email = String(labEmail || '').trim().toLowerCase();
+  if (!email) return null;
+  const { rows: regRows } = await pool.query(
+    `select id, name, status, lab_email
+       from facility_registrations
+      where lower(trim(lab_email)) = $1
+        and status in ('pending', 'approved')
+      limit 1`,
+    [email]
+  );
+  if (regRows[0]) {
+    return {
+      kind: 'registration',
+      status: regRows[0].status,
+      name: regRows[0].name,
+      message:
+        'This email address is already associated with a registered facility. Please check the existing facility details or contact the administrator.',
+    };
+  }
+  // Users already linked to a facility with this email
+  const { rows: userRows } = await pool.query(
+    `select u.id, u.name, u.facility_id, f.name as facility_name, f.facility_code
+       from users u
+       left join facilities f on f.id = u.facility_id
+      where lower(trim(u.email)) = $1
+        and u.facility_id is not null
+      limit 1`,
+    [email]
+  );
+  if (userRows[0]) {
+    const code = userRows[0].facility_code ? ` (${userRows[0].facility_code})` : '';
+    return {
+      kind: 'user',
+      name: userRows[0].facility_name || userRows[0].name,
+      message:
+        `This email address is already associated with a registered facility${code}. Please check the existing facility details or contact the administrator.`,
+    };
+  }
+  return null;
 }
 
 function camelReg(r) {
@@ -314,7 +451,24 @@ function camelReg(r) {
   };
 }
 
+// GET /api/facilities/name-search?q= — progressive public name lookup for subscribe form
+router.get('/name-search', async (req, res) => {
+  await ensureRegistrationSchema();
+  await ensureFacilityCodeSchema();
+  const q = (req.query.q || '').trim();
+  if (q.length < 1) return res.json({ matches: [] });
+  try {
+    const matches = await searchFacilityNameMatches(q, 12);
+    res.json({ matches, query: q });
+  } catch (e) {
+    console.error('name-search failed:', e.message);
+    res.status(500).json({ error: 'Could not search facilities.' });
+  }
+});
+
 // POST /api/facilities/subscribe — public self-registration (pending until Super Admin approves)
+// Duplicate protection: email uniqueness, exact name block, similar-name warning (client may
+// re-submit with acknowledgeSimilar:true for non-exact matches only).
 router.post('/subscribe', async (req, res) => {
   await ensureRegistrationSchema();
   await ensureFacilityCodeSchema();
@@ -323,44 +477,96 @@ router.post('/subscribe', async (req, res) => {
   const facilityType = req.body.facilityType === 'private' ? 'private' : 'government';
   const labEmail = (req.body.labEmail || '').trim();
   const contactName = (req.body.contactName || '').trim() || null;
+  const acknowledgeSimilar = !!req.body.acknowledgeSimilar;
 
   if (!name) return res.status(400).json({ error: 'Facility name is required.' });
   if (!labEmail || !labEmail.includes('@')) {
     return res.status(400).json({ error: 'A valid laboratory email address is required.' });
   }
 
+  // 1) Email — hard block
+  const emailConflict = await findEmailConflict(labEmail);
+  if (emailConflict) {
+    return res.status(409).json({
+      error: emailConflict.message,
+      code: 'DUPLICATE_EMAIL',
+      conflict: emailConflict,
+    });
+  }
+
+  const normalized = normalizeFacilityName(name);
+
+  // 2) Exact name on facilities — hard block
   const { rows: existingFac } = await pool.query(
-    `select id, name, facility_code from facilities where lower(trim(name)) = lower(trim($1)) limit 1`,
-    [name]
+    `select id, name, facility_code from facilities
+      where lower(trim(name)) = lower(trim($1))
+         or lower(regexp_replace(name, '[^a-zA-Z0-9]+', ' ', 'g')) = $2
+      limit 1`,
+    [name, normalized]
   );
   if (existingFac.length) {
     const d = existingFac[0];
     return res.status(409).json({
-      error: `This laboratory is already registered${d.facility_code ? ` (${d.facility_code})` : ''}: "${d.name}". Contact the programme administrator if you need access.`,
+      error:
+        `This facility appears to be already registered${d.facility_code ? ` (${d.facility_code})` : ''}: "${d.name}". ` +
+        'Please do not create another registration for the same facility. Contact the administrator if the existing record requires correction or updating.',
+      code: 'DUPLICATE_NAME_EXACT',
+      matches: [{ id: d.id, name: d.name, facilityCode: d.facility_code, source: 'registered', exact: true }],
     });
   }
 
-  const { rows: pending } = await pool.query(
-    `select id from facility_registrations
-      where status = 'pending' and lower(trim(name)) = lower(trim($1))
+  // 3) Exact pending registration name — hard block
+  const { rows: pendingExact } = await pool.query(
+    `select id, name, lab_email, status from facility_registrations
+      where status = 'pending'
+        and (lower(trim(name)) = lower(trim($1))
+             or lower(regexp_replace(name, '[^a-zA-Z0-9]+', ' ', 'g')) = $2)
       limit 1`,
-    [name]
+    [name, normalized]
   );
-  if (pending.length) {
+  if (pendingExact.length) {
     return res.status(409).json({
-      error: 'A registration for this laboratory name is already pending review. Please wait for the administrator to respond.',
+      error:
+        'A registration for this laboratory name is already pending review. Please wait for the administrator to respond.',
+      code: 'DUPLICATE_NAME_PENDING',
     });
   }
 
-  const { rows } = await pool.query(
-    `insert into facility_registrations (name, town, facility_type, lab_email, contact_name, status)
-     values ($1, $2, $3, $4, $5, 'pending') returning *`,
-    [name, town, facilityType, labEmail, contactName]
-  );
-  res.status(201).json({
-    message: 'Registration received. A Super Admin will review it. You will be contacted using the laboratory email provided.',
-    registration: camelReg(rows[0]),
-  });
+  // 4) Similar names — soft warn unless acknowledged
+  const similar = await searchFacilityNameMatches(name, 8);
+  const similarNonExact = similar.filter((m) => !m.exact);
+  if (similarNonExact.length && !acknowledgeSimilar) {
+    return res.status(409).json({
+      error: 'A facility with a similar name is already registered.',
+      code: 'SIMILAR_NAME',
+      matches: similarNonExact,
+      message:
+        'A facility with a similar name is already registered. Review the list below. If this is not your facility, you may continue registration.',
+    });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `insert into facility_registrations (name, town, facility_type, lab_email, contact_name, status)
+       values ($1, $2, $3, $4, $5, 'pending') returning *`,
+      [name, town, facilityType, labEmail, contactName]
+    );
+    res.status(201).json({
+      message:
+        'Registration received. A Super Admin will review it. You will be contacted using the laboratory email provided.',
+      registration: camelReg(rows[0]),
+    });
+  } catch (e) {
+    if (e && e.code === '23505') {
+      return res.status(409).json({
+        error:
+          'This registration conflicts with an existing facility or pending request (same email or name). Contact the administrator if you need help.',
+        code: 'UNIQUE_VIOLATION',
+      });
+    }
+    console.error('subscribe failed:', e);
+    res.status(500).json({ error: 'Could not submit registration. Please try again.' });
+  }
 });
 
 // GET /api/facilities/registrations — Super Admin pending/processed list

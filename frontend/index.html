@@ -341,7 +341,11 @@
     <h3 class="subsection" style="margin-top:0;">Register your laboratory</h3>
     <p class="note">Submit your laboratory details for review. A Super Admin will approve the registration before it appears on the programme list. This does not create a login by itself.</p>
     <label>Facility name *</label>
-    <input type="text" id="subscribeName" placeholder="e.g. Kitwe Teaching Hospital Laboratory">
+    <div style="position:relative;">
+      <input type="text" id="subscribeName" placeholder="e.g. Kitwe Teaching Hospital Laboratory" autocomplete="off" aria-autocomplete="list" aria-controls="subscribeNameSuggestions">
+      <div id="subscribeNameSuggestions" role="listbox" style="display:none; position:absolute; left:0; right:0; top:100%; z-index:30; background:#fff; border:1px solid var(--line,#C9D6D1); border-radius:9px; max-height:220px; overflow:auto; box-shadow:0 8px 24px rgba(18,33,31,.12); margin-top:4px;"></div>
+    </div>
+    <div id="subscribeNameWarning" style="display:none; margin:10px 0 0; padding:10px 12px; border-radius:9px; background:#fff3c4; border:1px solid #e6c86a; font-size:13px; color:#5c4a00;"></div>
     <label>City / town</label>
     <input type="text" id="subscribeTown" placeholder="e.g. Kitwe">
     <label>Type *</label>
@@ -1202,6 +1206,11 @@ function renderFacilities(){
     const userCount = USERS.filter(u=>u.facilityId===f.id).length;
     const typeLabel = f.facilityType === 'private' ? 'Private' : 'Government';
     const disabledBadge = f.active===false ? ` · <span class="badge" style="background:#eee;color:#666;">Disabled</span>` : '';
+    // Soft signal for Super Admin: other facilities share a long leading token
+    const norm = String(f.name||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+    const token = (norm.split(' ').filter(w=>w.length>=4)[0]) || '';
+    const maybeDup = token && FACILITIES.some(o=>o.id!==f.id && String(o.name||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().split(' ').includes(token));
+    const dupBadge = maybeDup ? ` · <span class="badge" style="background:#fff3c4;color:#7a5b00;" title="Another facility shares a similar name token — review for possible duplicates">Possible duplicate</span>` : '';
     const provides = f.canProvideRounds !== false;
     const provideBadge = provides
       ? `<span class="badge" style="background:#e3f3ea;color:#0d3b30;">Prepares samples</span>`
@@ -1211,7 +1220,7 @@ function renderFacilities(){
         <span class="badge role" style="margin-right:8px; vertical-align:middle;">${f.facilityCode || '—'}</span><strong style="vertical-align:middle;">${f.name}</strong>
       </div>
       <div class="meta" style="margin-top:4px; line-height:1.4;">
-        ${f.town || '—'} · ${typeLabel} · ${userCount} user${userCount===1?'':'s'}${disabledBadge}
+        ${f.town || '—'} · ${typeLabel} · ${userCount} user${userCount===1?'':'s'}${disabledBadge}${dupBadge}
       </div>
       <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px;">
         <button class="secondary small toggle-can-provide" data-id="${f.id}">${provides ? 'Set participant only' : 'Allow prepare samples'}</button>
@@ -3740,13 +3749,143 @@ document.getElementById('changePwBtn').addEventListener('click', async ()=>{
 
 document.getElementById('homeLoginCta').addEventListener('click', ()=>showPublicTab('login'));
 
+let subscribeAcknowledgeSimilar = false;
+let subscribeSearchTimer = null;
+
+function hideSubscribeSuggestions(){
+  const box = document.getElementById('subscribeNameSuggestions');
+  if(box){ box.style.display = 'none'; box.innerHTML = ''; }
+}
+
+function showSubscribeNameWarning(html, isExact){
+  const w = document.getElementById('subscribeNameWarning');
+  if(!w) return;
+  w.style.display = 'block';
+  w.style.background = isExact ? '#fde2e2' : '#fff3c4';
+  w.style.borderColor = isExact ? '#e8a0a0' : '#e6c86a';
+  w.style.color = isExact ? '#7a1414' : '#5c4a00';
+  w.innerHTML = html;
+}
+
+function clearSubscribeNameWarning(){
+  const w = document.getElementById('subscribeNameWarning');
+  if(w){ w.style.display = 'none'; w.innerHTML = ''; }
+  subscribeAcknowledgeSimilar = false;
+}
+
+async function runSubscribeNameSearch(){
+  const input = document.getElementById('subscribeName');
+  const box = document.getElementById('subscribeNameSuggestions');
+  if(!input || !box) return;
+  const q = input.value.trim();
+  if(q.length < 1){
+    hideSubscribeSuggestions();
+    clearSubscribeNameWarning();
+    return;
+  }
+  try{
+    const res = await fetch(API_BASE + '/facilities/name-search?q=' + encodeURIComponent(q));
+    const data = await res.json().catch(()=>({ matches: [] }));
+    const matches = data.matches || [];
+    if(!matches.length){
+      hideSubscribeSuggestions();
+      // keep warning if user already acknowledged similar from submit
+      return;
+    }
+    box.innerHTML = matches.map(m=>{
+      const tag = m.source === 'pending_registration' ? 'Pending review' : (m.facilityCode || 'Registered');
+      const exactMark = m.exact ? ' · exact match' : '';
+      return `<button type="button" class="subscribe-suggest-item" data-name="${String(m.name).replace(/"/g,'&quot;')}" data-exact="${m.exact?'1':'0'}"
+        style="display:block; width:100%; text-align:left; padding:10px 12px; border:none; border-bottom:1px solid #eef2f0; background:#fff; cursor:pointer; font-size:13px;">
+        <strong>${m.name}</strong>
+        <div class="meta" style="margin-top:2px;">${tag}${m.town ? ' · ' + m.town : ''}${exactMark}</div>
+      </button>`;
+    }).join('');
+    box.style.display = 'block';
+    box.querySelectorAll('.subscribe-suggest-item').forEach(btn=>{
+      btn.addEventListener('mousedown', (e)=>{
+        e.preventDefault();
+        input.value = btn.dataset.name || '';
+        hideSubscribeSuggestions();
+        if(btn.dataset.exact === '1'){
+          showSubscribeNameWarning(
+            `<strong>This facility appears to be already registered.</strong><br>
+             Existing facility: <strong>${btn.dataset.name}</strong><br>
+             Please do not create another registration for the same facility. Contact the administrator if the existing record needs correction.`,
+            true
+          );
+          subscribeAcknowledgeSimilar = false;
+        } else {
+          showSubscribeNameWarning(
+            `<strong>A facility with a similar name is already registered.</strong><br>
+             Existing facility: <strong>${btn.dataset.name}</strong> · Registration status: Already registered / pending<br>
+             <button type="button" id="subscribeConfirmDifferent" class="secondary small" style="margin-top:8px;">This is not my facility — continue registration</button>`,
+            false
+          );
+          subscribeAcknowledgeSimilar = false;
+          const c = document.getElementById('subscribeConfirmDifferent');
+          if(c) c.addEventListener('click', ()=>{
+            subscribeAcknowledgeSimilar = true;
+            showSubscribeNameWarning(
+              `You confirmed this is a different facility from the similar name shown. You may submit registration.`,
+              false
+            );
+          });
+        }
+      });
+    });
+    // Soft banner for progressive matches (not blocking)
+    const exact = matches.find(m=>m.exact);
+    if(exact){
+      showSubscribeNameWarning(
+        `<strong>This facility appears to be already registered.</strong><br>
+         Existing facility: <strong>${exact.name}</strong>${exact.facilityCode ? ' ('+exact.facilityCode+')' : ''}<br>
+         Please do not create another registration for the same facility. Contact the administrator if the existing record requires correction.`,
+        true
+      );
+      subscribeAcknowledgeSimilar = false;
+    } else if(matches.length){
+      const list = matches.slice(0,5).map(m=>`• ${m.name}`).join('<br>');
+      showSubscribeNameWarning(
+        `<strong>A facility with a similar name is already registered.</strong><br>${list}<br>
+         <button type="button" id="subscribeConfirmDifferent" class="secondary small" style="margin-top:8px;">This is not my facility — continue registration</button>`,
+        false
+      );
+      subscribeAcknowledgeSimilar = false;
+      const c = document.getElementById('subscribeConfirmDifferent');
+      if(c) c.addEventListener('click', ()=>{
+        subscribeAcknowledgeSimilar = true;
+        showSubscribeNameWarning(`You confirmed this is a different facility. You may submit registration.`, false);
+      });
+    }
+  }catch(e){
+    hideSubscribeSuggestions();
+  }
+}
+
 document.getElementById('homeSubscribeCta').addEventListener('click', ()=>{
   const card = document.getElementById('subscribeCard');
   card.style.display = card.style.display === 'none' ? 'block' : 'none';
+  if(card.style.display === 'block'){
+    clearSubscribeNameWarning();
+    hideSubscribeSuggestions();
+    subscribeAcknowledgeSimilar = false;
+  }
 });
 document.getElementById('subscribeCancelBtn').addEventListener('click', ()=>{
   document.getElementById('subscribeCard').style.display = 'none';
+  clearSubscribeNameWarning();
+  hideSubscribeSuggestions();
 });
+document.getElementById('subscribeName').addEventListener('input', ()=>{
+  subscribeAcknowledgeSimilar = false;
+  clearTimeout(subscribeSearchTimer);
+  subscribeSearchTimer = setTimeout(runSubscribeNameSearch, 220);
+});
+document.getElementById('subscribeName').addEventListener('blur', ()=>{
+  setTimeout(hideSubscribeSuggestions, 180);
+});
+
 document.getElementById('subscribeSubmitBtn').addEventListener('click', async ()=>{
   const name = document.getElementById('subscribeName').value.trim();
   const town = document.getElementById('subscribeTown').value.trim();
@@ -3759,15 +3898,40 @@ document.getElementById('subscribeSubmitBtn').addEventListener('click', async ()
     const res = await fetch(API_BASE + '/facilities/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, town, facilityType, labEmail, contactName }),
+      body: JSON.stringify({
+        name, town, facilityType, labEmail, contactName,
+        acknowledgeSimilar: subscribeAcknowledgeSimilar,
+      }),
     });
-    const data = await res.json();
-    if(!res.ok) throw new Error(data.error || 'Registration failed.');
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok){
+      if(data.code === 'SIMILAR_NAME' && data.matches){
+        const list = data.matches.map(m=>`• ${m.name}${m.facilityCode ? ' ('+m.facilityCode+')' : ''}`).join('<br>');
+        showSubscribeNameWarning(
+          `<strong>${data.message || data.error}</strong><br>${list}<br>
+           <button type="button" id="subscribeConfirmDifferent" class="secondary small" style="margin-top:8px;">This is not my facility — continue registration</button>`,
+          false
+        );
+        const c = document.getElementById('subscribeConfirmDifferent');
+        if(c) c.addEventListener('click', ()=>{
+          subscribeAcknowledgeSimilar = true;
+          showSubscribeNameWarning(`You confirmed this is a different facility. Click Submit registration again.`, false);
+        });
+        showToast(data.error || 'Similar facility found — review the warning.');
+        return;
+      }
+      if(data.code === 'DUPLICATE_NAME_EXACT' || data.code === 'DUPLICATE_EMAIL' || data.code === 'DUPLICATE_NAME_PENDING'){
+        showSubscribeNameWarning(`<strong>${data.error}</strong>`, true);
+      }
+      throw new Error(data.error || 'Registration failed.');
+    }
     showToast(data.message || 'Registration submitted.');
     document.getElementById('subscribeName').value = '';
     document.getElementById('subscribeTown').value = '';
     document.getElementById('subscribeEmail').value = '';
     document.getElementById('subscribeContact').value = '';
+    clearSubscribeNameWarning();
+    hideSubscribeSuggestions();
     document.getElementById('subscribeCard').style.display = 'none';
   }catch(e){ showToast(e.message); }
 });
