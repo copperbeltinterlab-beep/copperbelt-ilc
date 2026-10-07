@@ -295,7 +295,72 @@ router.patch('/:id', requireAuth, requireRole('facilityadmin', 'superadmin'), up
 
   let mode = pkg.participation_mode;
   let participantFacilityIds = pkg.participant_facility_ids;
-  if (participationMode) {
+  // Optional: append one or more facilities to a "selected" participation list
+  // (mirrors addSamples — round already exists, provider wants to include another lab).
+  if (req.body.addParticipantFacilityIds) {
+    let toAdd;
+    try {
+      toAdd = JSON.parse(req.body.addParticipantFacilityIds);
+    } catch (e) {
+      return res.status(400).json({ error: 'Invalid facility list to add.' });
+    }
+    if (!Array.isArray(toAdd) || toAdd.length === 0) {
+      return res.status(400).json({ error: 'Provide at least one facility to add.' });
+    }
+    toAdd = toAdd.map(Number).filter((n) => Number.isFinite(n) && n > 0);
+    if (!toAdd.length) {
+      return res.status(400).json({ error: 'Provide valid facility id(s) to add.' });
+    }
+    // Validate facilities exist
+    const { rows: facRows } = await pool.query(
+      'select id, name, facility_code from facilities where id = any($1::int[])',
+      [toAdd]
+    );
+    if (facRows.length !== toAdd.length) {
+      return res.status(400).json({ error: 'One or more facilities were not found.' });
+    }
+    if ((pkg.participation_mode || 'all') !== 'selected') {
+      // Round was open to everyone — switch to selected, keeping "all current active facilities"
+      // plus the explicit adds is wrong. Instead: start selected list from existing selection
+      // (empty → just the added ids) only if already selected; if mode is all, tell client to use
+      // selected mode. We convert: selected list = previous selected (or empty) ∪ toAdd.
+      // When mode was 'all', converting to selected with only the newly added labs would
+      // accidentally exclude everyone else — so require explicit selected mode, OR convert
+      // all → selected with all active facilities + toAdd.
+      if ((pkg.participation_mode || 'all') === 'all') {
+        const { rows: allActive } = await pool.query(
+          `select id from facilities where coalesce(active, true) = true order by id`
+        );
+        const base = allActive.map((r) => r.id);
+        participantFacilityIds = Array.from(new Set([...base, ...toAdd]));
+        mode = 'selected';
+      } else {
+        const existing = Array.isArray(pkg.participant_facility_ids)
+          ? pkg.participant_facility_ids.map(Number)
+          : [];
+        participantFacilityIds = Array.from(new Set([...existing, ...toAdd]));
+        mode = 'selected';
+      }
+    } else {
+      const existing = Array.isArray(pkg.participant_facility_ids)
+        ? pkg.participant_facility_ids.map(Number)
+        : [];
+      const already = toAdd.filter((id) => existing.includes(id));
+      if (already.length === toAdd.length) {
+        return res.status(400).json({
+          error: 'That facility is already on this round\'s participation list.',
+        });
+      }
+      participantFacilityIds = Array.from(new Set([...existing, ...toAdd]));
+      mode = 'selected';
+    }
+    updates.participation_mode = mode;
+    updates.participant_facility_ids = JSON.stringify(participantFacilityIds);
+    await pool.query(
+      'update rounds set participation_mode = $1, participant_facility_ids = $2 where round_package_id = $3',
+      [mode, JSON.stringify(participantFacilityIds), pkg.id]
+    );
+  } else if (participationMode) {
     mode = participationMode === 'selected' ? 'selected' : 'all';
     if (mode === 'selected') {
       try {

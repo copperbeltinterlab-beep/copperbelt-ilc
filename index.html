@@ -889,7 +889,80 @@ document.getElementById('reopenConfirmBtn').addEventListener('click', async ()=>
 // Reverse-lookup: given a flat sample/round id, find its parent package (undefined for any
 // pre-packaging round that somehow has no parent — shouldn't happen after the Phase 8 backfill).
 function packageForRoundId(roundId){ return PACKAGES.find(p=>p.samples.some(s=>String(s.id)===String(roundId))); }
+async function addFacilityToPackage(packageId, refreshTab){
+  const p = packageById(packageId);
+  if(!p){ showToast('Round not found.'); return; }
+  if(p.status === 'closed'){ showToast('Reopen the round before changing participation.'); return; }
+
+  const currentIds = (p.participationMode === 'selected' && Array.isArray(p.participantFacilityIds))
+    ? p.participantFacilityIds.map(Number)
+    : [];
+  const modeAll = p.participationMode !== 'selected';
+
+  // Facilities not yet on the list (when selected). When mode is "all", every active facility
+  // already participates — offer to switch to a selected list that includes a specific extra
+  // lab only if they want to narrow later; for "add" under all we just inform them.
+  if(modeAll){
+    const go = confirm(
+      'This round is open to ALL facilities — any laboratory can already participate.\n\n' +
+      'OK = switch to Selected participation and choose facilities to include (you can add more later).\n' +
+      'Cancel = leave as All facilities.'
+    );
+    if(!go) return;
+  }
+
+  const already = new Set(modeAll ? [] : currentIds);
+  const candidates = FACILITIES.filter(f => f.active !== false && !already.has(Number(f.id)));
+  if(candidates.length === 0){
+    showToast('Every active facility is already on this round.');
+    return;
+  }
+
+  const lines = candidates
+    .slice()
+    .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')))
+    .map(f => `${f.facilityCode || ('#'+f.id)} — ${f.name}${f.town ? ' ('+f.town+')' : ''}`)
+    .join('\n');
+  const pick = prompt(
+    'Add a participating facility.\nEnter the facility code (e.g. CB014) or part of the name:\n\n' +
+    (candidates.length <= 20 ? lines : lines.split('\n').slice(0, 20).join('\n') + '\n… (' + candidates.length + ' available — type a code or name)')
+  );
+  if(pick === null) return;
+  const q = pick.trim().toLowerCase();
+  if(!q){ showToast('Enter a facility code or name.'); return; }
+
+  let match = candidates.find(f => String(f.facilityCode||'').toLowerCase() === q);
+  if(!match){
+    const hits = candidates.filter(f =>
+      String(f.name||'').toLowerCase().includes(q) ||
+      String(f.facilityCode||'').toLowerCase().includes(q)
+    );
+    if(hits.length === 1) match = hits[0];
+    else if(hits.length > 1){
+      showToast(`Several matches (${hits.length}). Use a fuller name or the exact code (e.g. ${hits[0].facilityCode || hits[0].id}).`);
+      return;
+    }
+  }
+  if(!match){
+    showToast('No matching facility found among those not already on this round.');
+    return;
+  }
+  if(!confirm(`Add ${match.facilityCode ? match.facilityCode + ' · ' : ''}${match.name} to ${p.label}?`)) return;
+
+  try{
+    const fd = new FormData();
+    fd.append('addParticipantFacilityIds', JSON.stringify([match.id]));
+    const updated = await patchPackage(p.id, fd);
+    Object.assign(p, updated);
+    showToast(`Added ${match.name} to the round.`);
+    if(refreshTab === 'provide') renderProvide();
+    else if(refreshTab === 'allrounds') renderAllRounds();
+    else renderProvide();
+  }catch(e){ showToast(e.message); }
+}
+
 function participationLabel(r){
+
   if(r.participationMode !== 'selected') return 'All facilities';
   const ids = r.participantFacilityIds || [];
   return 'Selected: ' + ids.map(id=>facilityName(Number(id))).join(', ');
@@ -1756,6 +1829,7 @@ function renderProvide(){
         ${p.status==='active' ? `
           <button class="secondary small pkg-edit-deadline" data-id="${p.id}">Change deadline</button>
           <button class="secondary small pkg-add-sample" data-id="${p.id}">Add sample</button>
+          <button class="secondary small pkg-add-facility" data-id="${p.id}">Add facility</button>
           <button class="secondary small pkg-oversight-provide" data-id="${p.id}">View participation & results</button>
           <button class="secondary small pkg-close" data-id="${p.id}">Close round</button>
         ` : `
@@ -1807,6 +1881,9 @@ function renderProvide(){
         renderProvide();
       }catch(e){ showToast(e.message); }
     });
+  });
+  el.querySelectorAll('.pkg-add-facility').forEach(btn=>{
+    btn.addEventListener('click', ()=>addFacilityToPackage(btn.dataset.id, 'provide'));
   });
   el.querySelectorAll('.pkg-oversight-provide').forEach(btn=>{
     btn.addEventListener('click', ()=>openOversight(btn.dataset.id));
@@ -1996,6 +2073,7 @@ function renderAllRounds(){
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         ${p.status==='active' ? `
           <button class="secondary small pkg-edit-deadline-admin" data-id="${p.id}">Change deadline</button>
+          <button class="secondary small pkg-add-facility-admin" data-id="${p.id}">Add facility</button>
           <button class="secondary small pkg-close-admin" data-id="${p.id}">Close now</button>
         ` : `
           <button class="secondary small pkg-reopen-admin" data-id="${p.id}">Reopen</button>
@@ -2008,6 +2086,9 @@ function renderAllRounds(){
 
   el.querySelectorAll('.download-pkg-instructions-admin').forEach(link=>{
     link.addEventListener('click', (e)=>{ e.preventDefault(); downloadPackageInstructionsFile(link.dataset.id, link.dataset.filename); });
+  });
+  el.querySelectorAll('.pkg-add-facility-admin').forEach(btn=>{
+    btn.addEventListener('click', ()=>addFacilityToPackage(btn.dataset.id, 'allrounds'));
   });
   el.querySelectorAll('.pkg-edit-deadline-admin').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
